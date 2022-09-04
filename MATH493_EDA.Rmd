@@ -1,0 +1,102 @@
+---
+title: "MATH 493 EDA"
+author: "Carson Slater"
+date: '2022-08-26'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+```{r, include=FALSE}
+# Loading packages
+library(tidymodels)
+library(stringr)
+library(lubridate)
+library(knitr)
+library(mosaic)
+```
+
+# Main Research Topic
+Can we forecast the demand of particular SKU units up to a month in advance to help a Distribution Center cost-effectively replenish inventory?
+
+### Tidying Data
+```{r}
+# Reading the data
+data <- read.csv("/Users/carson/Documents/Wheaton Senior Year/Fall 2022/Mentored Research/baskets_sample_random_10.csv") %>% mutate(id = as.factor(id), order_id = as.factor(order_id), merchant_id = as.factor(merchant_id), sku_id = as.factor(sku_id), top_cat_id = as.factor(top_cat_id), sub_cat_id = as.factor(sub_cat_id))
+
+# Cleaning data so that R can read the time stamp
+data$placed_at = substr(data$placed_at, 1, nchar(data$placed_at)-4)
+
+# Changing the placed_by into a POSIXct variable type
+data$placed_at = as.POSIXct(data$placed_at)
+
+# Finding NA's
+data %>% filter(is.na(data$top_cat_id))
+
+# Removing the 7 NA's
+data <- data %>% filter(!is.na(data$top_cat_id))
+```
+
+
+#### About the Data
+FMCG's are fast-moving, consumer goods. Market basket analysis! Basket is a consumer's purchases at a given time.
+
+### Questions We Have
+ - We are going to ask a series of questions:
+     - What are the busiest times of the year to make note of?
+     - What kinds of goods are sold the most frequently?
+     - What kinds of goods are sold at higher quantities?
+     - What are the average quantities sold for each SKU?
+     - Are any of the types of goods sold at higher rates during certain parts of the year?
+     - Can we detect any automated purchasing?
+     - How many total merchants is this distribution center (DC) servicing?
+     - How frequent do these merchants purchase from this DC?
+     - Were these merchants customers throughout the entire time these data were collected?
+     - What did these merchants purchase? How much?
+
+#### Busiest times of the year - according to the data
+```{r}
+data %>%
+  ggplot(aes(x = placed_at)) + 
+  geom_freqpoly(binwidth = 86400)
+```
+
+#### What kind of goods are sold most frequently?
+```{r}
+# Creating more columns with more date-specific information
+data_timecols <- data %>% mutate(year = format(data$placed_at, "%Y"),
+                                 month = format(data$placed_at, "%m"),
+                                 day = format(data$placed_at, "%d"),
+                                 hour = format(data$placed_at, "%H"),
+                                 minute = format(data$placed_at, "%M"),
+                                 second = format(data$placed_at, "%S"),
+                                 yday = yday(data$placed_at),
+                                 wday = wday(data$placed_at),
+                                 yweek = week(data$placed_at))
+```
+
+#### Average Quantity of Each Good/Category for Each Purchase
+```{r}
+avg_qty <- data_timecols %>% group_by(sku_id) %>% summarise_at(vars(qty), list(mean = mean))
+avg_qty2 <- data_timecols %>% group_by(top_cat_id) %>% summarise_at(vars(qty), list(mean = mean))
+avg_qty3 <- data_timecols %>% group_by(sub_cat_id) %>% summarise_at(vars(qty), list(mean = mean))
+```
+
+
+```{r}
+data_timecols %>% ggplot(aes(x = top_cat_id, y = qty, fill = top_cat_id)) +
+  geom_boxplot() +
+  ylim(0, 500)
+```
+
+```{r}
+data_timecols %>% ggplot(aes(x = top_cat_id, y = qty, fill = top_cat_id)) +
+  geom_col()
+```
+
