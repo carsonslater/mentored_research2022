@@ -20,6 +20,7 @@ library(stringr)
 library(lubridate)
 library(knitr)
 library(mosaic)
+library(doMC)
 ```
 
 # Main Research Topic
@@ -28,7 +29,14 @@ Can we forecast the demand of particular SKU units up to a month in advance to h
 ### Tidying Data
 ```{r}
 # Reading the data
-data <- read.csv("/Users/carson/Documents/Wheaton Senior Year/Fall 2022/Mentored Research/baskets_sample_random_10.csv") %>% mutate(id = as.factor(id), order_id = as.factor(order_id), merchant_id = as.factor(merchant_id), sku_id = as.factor(sku_id), top_cat_id = as.factor(top_cat_id), sub_cat_id = as.factor(sub_cat_id))
+
+urlfile <- 'https://raw.githubusercontent.com/carsonslater/mentored_research2022/Main/baskets_sample_random_10.csv'
+data <- read.csv(urlfile) %>% mutate(id = as.factor(id), 
+                                     order_id = as.factor(order_id), 
+                                     merchant_id = as.factor(merchant_id), 
+                                     sku_id = as.factor(sku_id), 
+                                     top_cat_id = as.factor(top_cat_id), 
+                                     sub_cat_id = as.factor(sub_cat_id))
 
 # Cleaning data so that R can read the time stamp
 data$placed_at = substr(data$placed_at, 1, nchar(data$placed_at)-4)
@@ -41,7 +49,20 @@ data %>% filter(is.na(data$top_cat_id))
 
 # Removing the 7 NA's
 data <- data %>% filter(!is.na(data$top_cat_id))
+
+
+# Creating more columns with more date-specific information
+data_timecols <- data %>% mutate(year = format(data$placed_at, "%Y"),
+                                 month = format(data$placed_at, "%m"),
+                                 day = format(data$placed_at, "%d"),
+                                 hour = format(data$placed_at, "%H"),
+                                 minute = format(data$placed_at, "%M"),
+                                 second = format(data$placed_at, "%S"),
+                                 yday = yday(data$placed_at),
+                                 wday = wday(data$placed_at),
+                                 yweek = week(data$placed_at))
 ```
+
 
 
 #### About the Data
@@ -59,6 +80,19 @@ FMCG's are fast-moving, consumer goods. Market basket analysis! Basket is a cons
      - How frequent do these merchants purchase from this DC?
      - Were these merchants customers throughout the entire time these data were collected?
      - What did these merchants purchase? How much?
+     
+#### Distribution of Quantity
+```{r}
+data_timecols %>% ggplot(aes(x = qty)) +
+  geom_histogram() + xlim(0, 200) + ylim(0, 200) +
+  facet_wrap(~ month)
+```
+
+#### Volume of Goods Sold Each Year Week
+```{r}
+data_timecols %>% ggplot(aes(x = yweek, y= qty)) +
+  geom_col() + ylim(0,10000)
+```
 
 #### Busiest times of the year - according to the data
 ```{r}
@@ -67,36 +101,74 @@ data %>%
   geom_freqpoly(binwidth = 86400)
 ```
 
-#### What kind of goods are sold most frequently?
+#### Average Price Paid per Purchase for Merchants
 ```{r}
-# Creating more columns with more date-specific information
-data_timecols <- data %>% mutate(year = format(data$placed_at, "%Y"),
-                                 month = format(data$placed_at, "%m"),
-                                 day = format(data$placed_at, "%d"),
-                                 hour = format(data$placed_at, "%H"),
-                                 minute = format(data$placed_at, "%M"),
-                                 second = format(data$placed_at, "%S"),
-                                 yday = yday(data$placed_at),
-                                 wday = wday(data$placed_at),
-                                 yweek = week(data$placed_at))
+length(unique(data_timecols$merchant_id))
+mer_by_order <- data_timecols %>% group_by(order_id, merchant_id) %>% summarise(order_tot = sum(price))
+avg_exp <- mer_by_order %>% 
+  group_by(merchant_id) %>% 
+  summarise(avg_exp = mean(order_tot))
+
+head(avg_exp) %>% kable()
+favstats(mer_by_order$order_tot)
 ```
 
-#### Average Quantity of Each Good/Category for Each Purchase
+#### Average Quantity of SKU/Categories per Purchase
 ```{r}
-avg_qty <- data_timecols %>% group_by(sku_id) %>% summarise_at(vars(qty), list(mean = mean))
-avg_qty2 <- data_timecols %>% group_by(top_cat_id) %>% summarise_at(vars(qty), list(mean = mean))
-avg_qty3 <- data_timecols %>% group_by(sub_cat_id) %>% summarise_at(vars(qty), list(mean = mean))
+# no need to group_by `order_id` because each order only has
+length(unique(data_timecols$sku_id))
+sku_by_qty <- data_timecols %>% group_by(sku_id) %>% 
+  summarise(avg_qty = mean(qty), med_qty = median(qty), count = n())
+head(sku_by_qty)
+
+length(unique(data_timecols$top_cat_id))
+top_cat_by_qty <- data_timecols %>% group_by(top_cat_id) %>% 
+  summarise(avg_qty = mean(qty), med_qty = median(qty), count = n())
+head(top_cat_by_qty)
+
+length(unique(data_timecols$sub_cat_id))
+sub_cat_by_qty <- data_timecols %>% group_by(sub_cat_id) %>% 
+  summarise(avg_qty = mean(qty), med_qty = median(qty), count = n()) 
+head(sub_cat_by_qty)
 ```
 
 
+
+#### Analyzing Coefficients
 ```{r}
-data_timecols %>% ggplot(aes(x = top_cat_id, y = qty, fill = top_cat_id)) +
-  geom_boxplot() +
-  ylim(0, 500)
+# Preparing the model
+set.seed(100)
+sku_split <- data_timecols %>%
+  initial_split(
+    prop = 0.8
+  )
+# Training set
+sku_test <- testing(sku_split)
+# Testing set
+sku_train <- training(sku_split)
+
+sku_recipe <- recipe(qty ~ ., data = sku_train) %>% 
+  step_corr(all_numeric_predictors())
+
+sku_prep <- prep(sku_recipe)
+
+bake(sku_prep, new_data = NULL)
 ```
 
-```{r}
-data_timecols %>% ggplot(aes(x = top_cat_id, y = qty, fill = top_cat_id)) +
-  geom_col()
+```{r, eval = FALSE}
+lm_mod <- linear_reg() %>%  
+    set_engine("lm") 
+
+lm_wkflow <- workflow() %>% 
+    add_recipe(sku_recipe) %>% 
+    add_model(lm_mod)
+
+sku_folds <- vfold_cv(sku_train, v = 10, repeats = 5)
+
+sku_resamp <- lm_wkflow %>% fit_resamples(resamples = sku_folds)
+
+my_metrics <- metric_set(rmse, rsq)
+kable(collect_metrics(sku_resamp))
 ```
+
 
