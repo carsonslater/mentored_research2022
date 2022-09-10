@@ -13,6 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 # Loading packages
 library(tidymodels)
 library(stringr)
+library(janitor)
 library(glmnet)
 library(lubridate)
 library(knitr)
@@ -69,39 +70,114 @@ full <- full %>% mutate(id = as.factor(id),
                         sub_cat_id = as.factor(sub_cat_id))
 
 # Cleaning data so that R can read the time stamp
-data$placed_at = substr(data$placed_at, 1, nchar(data$placed_at)-4)
+full$placed_at = substr(full$placed_at, 1, nchar(full$placed_at)-4)
 
 # Changing the placed_by into a POSIXct variable type
-data$placed_at = as.POSIXct(data$placed_at)
+full$placed_at = as.POSIXct(full$placed_at)
 
 # Finding NA's
-data %>% filter(is.na(data$top_cat_id))
+full %>% filter(is.na(full$top_cat_id))
 
-# Removing the 7 NA's
-data <- data %>% filter(!is.na(data$top_cat_id))
+# Removing the 11 NA's
+full <- full %>% filter(!is.na(full$top_cat_id))
 
 
 # Creating more columns with more date-specific information
-data_timecols <- data %>% mutate(year = format(data$placed_at, "%Y"),
-                                 month = format(data$placed_at, "%m"),
-                                 day = format(data$placed_at, "%d"),
-                                 hour = format(data$placed_at, "%H"),
-                                 minute = format(data$placed_at, "%M"),
-                                 second = format(data$placed_at, "%S"),
-                                 yday = yday(data$placed_at),
-                                 wday = wday(data$placed_at),
-                                 yweek = week(data$placed_at))
+full <- full %>% mutate(year = format(full$placed_at, "%Y"),
+                        month = format(full$placed_at, "%m"),
+                        day = format(full$placed_at, "%d"),
+                        hour = format(full$placed_at, "%H"),
+                        minute = format(full$placed_at, "%M"),
+                        second = format(full$placed_at, "%S"),
+                        yday = yday(full$placed_at),
+                        wday = wday(full$placed_at),
+                        yweek = week(full$placed_at))
 
-data_timecols <- data_timecols %>% mutate(year = as.factor(year),
-                                 month = as.factor(month),
-                                 day = as.factor(day),
-                                 hour = as.factor(hour),
-                                 minute = as.factor(minute),
-                                 second = as.factor(second),
-                                 yday = as.factor(yday),
-                                 wday = as.factor(wday),
-                                 yweek = as.factor(yweek))
+# Creating factor variables for dates and times
+full <- full %>% mutate(year = as.factor(year),
+                        month = as.factor(month),
+                        day = as.factor(day),
+                        hour = as.factor(hour),
+                        minute = as.factor(minute),
+                        second = as.factor(second),
+                        yday = as.factor(yday),
+                        wday = as.factor(wday),
+                        yweek = as.factor(yweek))
 
+# Looking for duplicates orders
+dupes <- get_dupes(full, order_id, placed_at, merchant_id, sku_id)
+
+# Removing the 178 duplicate observations
+full <- full %>% distinct(order_id, placed_at, merchant_id, sku_id, .keep_all = TRUE)
 ```
+
+### Finding the Top 50 SKU's by Total Volume
+```{r}
+# Collecting the top 50 SKU's
+qty_grp <- full %>% group_by(sku_id) %>% 
+  summarize(tot_qty = sum(qty)) %>% 
+  arrange(desc(tot_qty)) %>% 
+  slice(1:50)
+
+# Creating a new data frame with only the top 50 SKU's by volume
+full_50 <- full %>% filter(full$sku_id %in% qty_grp$sku_id)
+
+head(full_50)
+
+# Checking if there are only 50 unique SKU's in full_50
+full_50 %>% summarize(count = n_distinct(sku_id))
 ```
 
+We have just found the top 50 `sku_id`'s by total volume. What if we found the top 50 `sku_id`'s by average order volume? This might be slightly more relevant for builing a forecasting model.
+
+### Finding the Top 50 SKU's by Average Order Volume
+```{r}
+# Collecting the top 50 SKU's
+sku_cnt <- full %>% count(sku_id) %>% filter(n >= 20)
+  
+avg_qty_grp <- full %>% filter(full$sku_id %in% sku_cnt$sku_id) %>% 
+  group_by(sku_id) %>% 
+  summarize(avg_qty = mean(qty)) %>% 
+  arrange(desc(avg_qty)) %>% 
+  slice(1:50)
+  
+# Creating a new data frame with only the top 50 SKU's by average order volume
+full_50_avg <- full %>% filter(full$sku_id %in% avg_qty_grp$sku_id)
+
+head(full_50_avg)
+
+# Checking if there are only 50 unique SKU's in full_50_avg
+full_50_avg %>% summarize(count = n_distinct(sku_id))
+```
+
+#### Which subset of the data should I use to build the model?
+
+We need to explore the dynamics of each subset to decipher which one would be most helpful for our purposes. Right off the bat, it appears that the total volume subset `full_50`, over six times the amount of information as the average order volume subset, `full_50_avg`. This might give the former a leg up on which one we decide to use. 
+
+#### `full_50` EDA
+```{r}
+# For visualization purposes
+library(RColorBrewer)
+n <- 50
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, 
+                           rownames(qual_col_pals)))
+
+pie(rep(1,n), col=sample(col_vector, n))
+```
+
+```{r}
+full_50 %>%
+  ggplot(aes(x = placed_at, color = sku_id)) + 
+  geom_freqpoly(binwidth = 86400)
+
+full_50 %>%
+  ggplot(aes(x = placed_at, color = sku_id)) + 
+  geom_freqpoly(binwidth = 86400) +
+  facet_wrap(~ sku_id)
+```
+
+#### Question for further exploration:
+ - Which categories are most represented in these two subsets?
+ 
