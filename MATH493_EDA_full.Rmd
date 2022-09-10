@@ -1,0 +1,107 @@
+---
+title: "SKU EDA (Full Data)"
+author: "Carson Slater"
+date: '2022-09-09'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+# Loading packages
+library(tidymodels)
+library(stringr)
+library(glmnet)
+library(lubridate)
+library(knitr)
+library(mosaic)
+library(doParallel)
+```
+
+```{r, include=FALSE}
+# For parallel processing
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+```
+
+### The Background
+
+This is the second .Rmd file dedicated to EDA for my poster project in the Fall of 2022 aimed at forecasting demand for particular FMCS data. FMCG's are fast-moving, consumer goods, meaning that lots of research can be done here that is market basket analysis! Basket is a consumer's purchases at a given time.
+
+Unfortunately, this is not a market basket analysis project. Here are some of the questions that I have asked, some of which I have tapped into, but others I have yet to explore:
+
+ - What are the busiest times of the year to make note of?
+ - What kinds of goods are sold the most frequently?
+ - What kinds of goods are sold at higher quantities?
+ - What are the average quantities sold for each SKU?
+ - Are any of the types of goods sold at higher rates during certain parts of the year?
+ - Can we detect any automated purchasing?
+ - How many total merchants is this distribution center (DC) servicing?
+ - How frequent do these merchants purchase from this DC?
+ - Were these merchants customers throughout the entire time these data were collected?
+ - What did these merchants purchase? How much?
+ 
+### New Questions I have asked.
+
+The questions listed above are less pin-pointed and have more to do with "getting a feel for" the data. After reading [Yelland's *Bayesian Forecasting of Parts Demand* ](https://www.sciencedirect.com/science/article/pii/S0169207009001770?casa_token=WKwx9lufKc4AAAAA:kEO3S0jjCzmsVLZa8arVvXiatZEDVS9MJcSA4U2cspr7vnqpeTyQttf1bs78hTCOHaRZoxRi3A), I was inspired to narrow down my ambition idea to build a model to forecast demand from all merchants for all SKU's. Hence, I want to do some more particular exploratory data analysis on the top 50 SKU's by volume and by frequency, and try to build a model off of these data.
+
+### Loading the Full Data
+```{r,}
+url <- "https://raw.githubusercontent.com/carsonslater/mentored_research2022/Main/new_baskets_full.csv"
+
+full <- read.csv(url)
+```
+
+### Tidying the Data
+```{r}
+# Finding Percentage of the Missing Data for each column.
+colMeans(is.na(full))*100
+# There is a very small proportion of missing data in these data 
+
+full <- full %>% mutate(id = as.factor(id), 
+                        order_id = as.factor(order_id), 
+                        merchant_id = as.factor(merchant_id), 
+                        sku_id = as.factor(sku_id), 
+                        top_cat_id = as.factor(top_cat_id), 
+                        sub_cat_id = as.factor(sub_cat_id))
+
+# Cleaning data so that R can read the time stamp
+data$placed_at = substr(data$placed_at, 1, nchar(data$placed_at)-4)
+
+# Changing the placed_by into a POSIXct variable type
+data$placed_at = as.POSIXct(data$placed_at)
+
+# Finding NA's
+data %>% filter(is.na(data$top_cat_id))
+
+# Removing the 7 NA's
+data <- data %>% filter(!is.na(data$top_cat_id))
+
+
+# Creating more columns with more date-specific information
+data_timecols <- data %>% mutate(year = format(data$placed_at, "%Y"),
+                                 month = format(data$placed_at, "%m"),
+                                 day = format(data$placed_at, "%d"),
+                                 hour = format(data$placed_at, "%H"),
+                                 minute = format(data$placed_at, "%M"),
+                                 second = format(data$placed_at, "%S"),
+                                 yday = yday(data$placed_at),
+                                 wday = wday(data$placed_at),
+                                 yweek = week(data$placed_at))
+
+data_timecols <- data_timecols %>% mutate(year = as.factor(year),
+                                 month = as.factor(month),
+                                 day = as.factor(day),
+                                 hour = as.factor(hour),
+                                 minute = as.factor(minute),
+                                 second = as.factor(second),
+                                 yday = as.factor(yday),
+                                 wday = as.factor(wday),
+                                 yweek = as.factor(yweek))
+
+```
+```
+

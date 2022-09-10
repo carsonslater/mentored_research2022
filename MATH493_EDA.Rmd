@@ -17,10 +17,18 @@ knitr::opts_chunk$set(
 # Loading packages
 library(tidymodels)
 library(stringr)
+library(glmnet)
 library(lubridate)
 library(knitr)
 library(mosaic)
-library(doMC)
+library(doParallel)
+```
+
+```{r, include=FALSe}
+# For parallel processing
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
 ```
 
 # Main Research Topic
@@ -61,6 +69,17 @@ data_timecols <- data %>% mutate(year = format(data$placed_at, "%Y"),
                                  yday = yday(data$placed_at),
                                  wday = wday(data$placed_at),
                                  yweek = week(data$placed_at))
+
+data_timecols <- data_timecols %>% mutate(year = as.factor(year),
+                                 month = as.factor(month),
+                                 day = as.factor(day),
+                                 hour = as.factor(hour),
+                                 minute = as.factor(minute),
+                                 second = as.factor(second),
+                                 yday = as.factor(yday),
+                                 wday = as.factor(wday),
+                                 yweek = as.factor(yweek))
+
 ```
 
 
@@ -131,44 +150,11 @@ sub_cat_by_qty <- data_timecols %>% group_by(sub_cat_id) %>%
   summarise(avg_qty = mean(qty), med_qty = median(qty), count = n()) 
 head(sub_cat_by_qty)
 ```
+This data is skewed - lots of the medians have large disparities from the mean.
 
-
-
-#### Analyzing Coefficients
-```{r}
-# Preparing the model
-set.seed(100)
-sku_split <- data_timecols %>%
-  initial_split(
-    prop = 0.8
-  )
-# Training set
-sku_test <- testing(sku_split)
-# Testing set
-sku_train <- training(sku_split)
-
-sku_recipe <- recipe(qty ~ ., data = sku_train) %>% 
-  step_corr(all_numeric_predictors())
-
-sku_prep <- prep(sku_recipe)
-
-bake(sku_prep, new_data = NULL)
-```
-
+#### Building a Regression Model
 ```{r, eval = FALSE}
-lm_mod <- linear_reg() %>%  
-    set_engine("lm") 
+lm <- glm(qty ~ order_id + merchant_id + sku_id + top_cat_id + sub_cat_id + price + year + hour + yday + wday, data = data_timecols, family = "gaussian")
 
-lm_wkflow <- workflow() %>% 
-    add_recipe(sku_recipe) %>% 
-    add_model(lm_mod)
-
-sku_folds <- vfold_cv(sku_train, v = 10, repeats = 5)
-
-sku_resamp <- lm_wkflow %>% fit_resamples(resamples = sku_folds)
-
-my_metrics <- metric_set(rmse, rsq)
-kable(collect_metrics(sku_resamp))
+# This outputted too many coefficients, which lends to too many confounding points in the data.
 ```
-
-
