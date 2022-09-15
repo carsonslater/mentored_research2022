@@ -6,7 +6,11 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
 ```
 
 ```{r, include=FALSE}
@@ -30,7 +34,7 @@ registerDoParallel(cl)
 
 ### The Background
 
-This is the second .Rmd file dedicated to EDA for my poster project in the Fall of 2022 aimed at forecasting demand for particular FMCS data. FMCG's are fast-moving, consumer goods, meaning that lots of research can be done here that is market basket analysis! Basket is a consumer's purchases at a given time.
+This is the second .Rmd file dedicated to EDA for my poster project in the Fall of 2022 aimed at forecasting demand for particular FMCS data. FMCG's are fast-moving, consumer goods, meaning that lots of research can be done here that is market basket analysis! A basket is a consumer's purchases at a given time.
 
 Unfortunately, this is not a market basket analysis project. Here are some of the questions that I have asked, some of which I have tapped into, but others I have yet to explore:
 
@@ -45,7 +49,7 @@ Unfortunately, this is not a market basket analysis project. Here are some of th
  - Were these merchants customers throughout the entire time these data were collected?
  - What did these merchants purchase? How much?
  
-### New Questions I have asked.
+### Narrowing down the focus.
 
 The questions listed above are less pin-pointed and have more to do with "getting a feel for" the data. After reading [Yelland's *Bayesian Forecasting of Parts Demand* ](https://www.sciencedirect.com/science/article/pii/S0169207009001770?casa_token=WKwx9lufKc4AAAAA:kEO3S0jjCzmsVLZa8arVvXiatZEDVS9MJcSA4U2cspr7vnqpeTyQttf1bs78hTCOHaRZoxRi3A), I was inspired to narrow down my ambition idea to build a model to forecast demand from all merchants for all SKU's. Hence, I want to do some more particular exploratory data analysis on the top 50 SKU's by volume and by frequency, and try to build a model off of these data.
 
@@ -114,7 +118,8 @@ full <- full %>% distinct(order_id, placed_at, merchant_id, sku_id, .keep_all = 
 ### Finding the Top 50 SKU's by Total Volume
 ```{r}
 # Collecting the top 50 SKU's
-qty_grp <- full %>% group_by(sku_id) %>% 
+qty_grp <- full %>% filter(order_id)
+  group_by(sku_id) %>% 
   summarize(tot_qty = sum(qty)) %>% 
   arrange(desc(tot_qty)) %>% 
   slice(1:50)
@@ -219,7 +224,7 @@ full_50_avg %>%
   scale_fill_manual(values = col_vector)
 ```
 
-After examining the composition of both of these subsets, we have decided to not consider the average order volume set. What we will  examine for good measure, however is the subset of the full data the contains order information for the top 50 median order volumes. From there we will decide which data set we will want to consider for model building.
+After examining the composition of both of these subsets, we have decided to not consider the average order volume set. What we will examine for good measure, however is the subset of the full data the contains order information for the top 50 median order volumes. From there we will decide which data set we will want to consider for model building.
 
 ### Creating the Median Order Volume Subset
 ```{r}
@@ -243,8 +248,12 @@ common2
 
 common3 <- intersect(full_50_med$sku_id, full_50_avg$sku_id)
 common3
-```
 
+compare <- avg_qty_grp %>% 
+  mutate(med_qty = med_qty_grp$med_qty) %>% 
+  mutate(difference = avg_qty - med_qty)
+```
+# represents the total volume by x%
 #### `full_50_med` EDA
 ```{r}
 # Number of purchases over time series
@@ -260,7 +269,7 @@ full_50_med %>%
   scale_fill_manual(values = col_vector)
 ```
 
-Because `top_cat_id` 4 comprises most of the subset data for `full_50_avg` and `full_50_med`, intuition tells us that `top_cat_id` 4 is a type of good that is bought and sold at a very high unit rate. Although this is useful modeling information, we want our model to be able to predict different types of goods and baskets, so we ought to consider builing our model on `full_50`.
+Because `top_cat_id` 4 comprises most of the subset data for `full_50_avg` and `full_50_med`, intuition tells us that `top_cat_id` 4 is a type of good that is bought and sold at a very high unit rate. Although this is useful modeling information, we want our model to be able to predict different types of goods and baskets, so we ought to consider building our model on `full_50`.
 
 By using `full_50`, we lose information on most of the SKU's, but the trade off is that our model will be trained with less noise to more precisely forecast the most popular SKU's.
 

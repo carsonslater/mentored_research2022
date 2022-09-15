@@ -1,0 +1,182 @@
+---
+title: "Intro to Time Series Forecasting"
+author: "Carson Slater"
+date: '2022-09-14'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+```{r, include=FALSE}
+# Loading packages
+library(tidymodels)
+library(stringr)
+library(janitor)
+library(glmnet)
+library(lubridate)
+library(knitr)
+library(mosaic)
+library(doParallel)
+```
+
+```{r, include=FALSE}
+# For parallel processing
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+```
+
+
+### Importing the Data
+```{r, include=TRUE}
+url <- "https://raw.githubusercontent.com/carsonslater/mentored_research2022/Main/new_baskets_full.csv"
+
+full <- read.csv(url)
+```
+
+### Tidying the Data
+```{r}
+# Finding Percentage of the Missing Data for each column.
+colMeans(is.na(full))*100
+# There is a very small proportion of missing data in these data 
+
+full <- full %>% mutate(id = as.factor(id), 
+                        order_id = as.factor(order_id), 
+                        merchant_id = as.factor(merchant_id), 
+                        sku_id = as.factor(sku_id), 
+                        top_cat_id = as.factor(top_cat_id), 
+                        sub_cat_id = as.factor(sub_cat_id))
+
+# Cleaning data so that R can read the time stamp
+full$placed_at = substr(full$placed_at, 1, nchar(full$placed_at)-4)
+
+# Changing the placed_by into a POSIXct variable type
+full$placed_at = as.POSIXct(full$placed_at)
+
+# Finding NA's
+full %>% filter(is.na(full$top_cat_id))
+
+# Removing the 11 NA's
+full <- full %>% filter(!is.na(full$top_cat_id))
+
+
+# Creating more columns with more date-specific information
+full <- full %>% mutate(year = format(full$placed_at, "%Y"),
+                        month = format(full$placed_at, "%m"),
+                        day = format(full$placed_at, "%d"),
+                        hour = format(full$placed_at, "%H"),
+                        minute = format(full$placed_at, "%M"),
+                        second = format(full$placed_at, "%S"),
+                        yday = yday(full$placed_at),
+                        wday = wday(full$placed_at),
+                        yweek = week(full$placed_at))
+
+# Creating factor variables for dates and times
+full <- full %>% mutate(year = as.factor(year),
+                        month = as.factor(month),
+                        day = as.factor(day),
+                        hour = as.factor(hour),
+                        minute = as.factor(minute),
+                        second = as.factor(second),
+                        yday = as.factor(yday),
+                        wday = as.factor(wday),
+                        yweek = as.factor(yweek))
+
+# Turning the timestamp into an actual date
+full <- full %>% mutate(placed_at = as.Date(placed_at))
+
+# Looking for duplicates orders
+dupes <- get_dupes(full, order_id, placed_at, merchant_id, sku_id)
+
+# Removing the 178 duplicate observations
+full <- full %>% distinct(order_id, placed_at, merchant_id, sku_id, .keep_all = TRUE)
+```
+
+### Finding the Top 50 SKU's by Total Volume
+```{r}
+# Collecting the top 50 SKU's
+qty_grp <- full %>% filter(!(order_id == 48674)) %>% # I filtered the outlier order
+  group_by(sku_id) %>% 
+  summarize(tot_qty = sum(qty)) %>% 
+  arrange(desc(tot_qty)) %>% 
+  slice(1:50)
+
+# Creating a new data frame with only the top 50 SKU's by volume
+full_50 <- full %>% filter(full$sku_id %in% qty_grp$sku_id)
+
+head(full_50)
+
+# Checking if there are only 50 unique SKU's in full_50
+full_50 %>% summarize(count = n_distinct(sku_id))
+```
+
+### Loading the `prophet` API
+```{r, eval=FALSE}
+# READ THIS IF YOU HAVE NEVER USED PROPHET
+# Taken from https://facebook.github.io/prophet/docs/installation.html#r
+
+# We recommend running this is a fresh R session or restarting your current session
+install.packages(c("cmdstanr", "posterior"), repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+
+# If you haven't installed cmdstan before, run:
+cmdstanr::install_cmdstan()
+# Otherwise, you can point cmdstanr to your cmdstan path:
+
+# cmdstanr::set_cmdstan_path(path = <your existing cmdstan>)
+
+# Set the R_STAN_BACKEND environment variable
+Sys.setenv(R_STAN_BACKEND = "CMDSTANR")
+```
+```{r, eval=FALSE}
+library(prophet)
+```
+
+### Modeling
+```{r, eval=FALSE}
+## Sorting the data into sku_id dataframes
+full_50_splt <- full_50 %>% group_by(sku_id) %>% group_split()
+
+for (x in 1:50) {
+  full_50_splt[[x]] <- full_50_splt[[x]] %>% 
+    select(placed_at, qty)
+}
+```
+
+# Consider `sku_id` 269.
+```{r, eval=FALSE}
+no_269 <- full_50 %>% filter(sku_id == 269) %>% 
+  select(placed_at, qty) %>% 
+  filter(qty < 1001) %>% 
+  rename(ds = placed_at, y = qty)
+
+no_269 <- no_269 %>% group_by(ds) %>% 
+  mutate(y = sum(y)) %>% 
+  unique()
+
+mod_269 <- prophet(no_269, yearly.seasonality = TRUE, fit = FALSE) %>% 
+  add_country_holidays(country_name = 'ID')
+
+fit_269 <- fit.prophet(mod_269, no_269)
+
+fit_269$train.holiday.names
+
+dates <- tibble(ds = seq(as.Date('2022-08-16'), as.Date('2023-08-16'), by = 'days'), y = rep(NA, 366))
+
+forecast_269 <- predict(fit_269, dates)
+
+prophet_plot_components(m = fit_269, forecast_269)
+
+plot(fit_269, forecast_269)
+```
+
+```{r}
+full_50 %>% mutate(placed_at = as.POSIXct(placed_at)) %>% 
+  ggplot(aes(x = placed_at)) +
+  geom_freqpoly()
+```
+
