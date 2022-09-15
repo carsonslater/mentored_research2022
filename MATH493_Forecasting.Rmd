@@ -137,17 +137,8 @@ library(prophet)
 ```
 
 ### Modeling
-```{r, eval=FALSE}
-## Sorting the data into sku_id dataframes
-full_50_splt <- full_50 %>% group_by(sku_id) %>% group_split()
 
-for (x in 1:50) {
-  full_50_splt[[x]] <- full_50_splt[[x]] %>% 
-    select(placed_at, qty)
-}
-```
-
-# Consider `sku_id` 269.
+#### Consider `sku_id` 269.
 ```{r, eval=FALSE}
 no_269 <- full_50 %>% filter(sku_id == 269) %>% 
   select(placed_at, qty) %>% 
@@ -175,8 +166,55 @@ plot(fit_269, forecast_269)
 ```
 
 ```{r}
-full_50 %>% mutate(placed_at = as.POSIXct(placed_at)) %>% 
+full_50 %>% filter(sku_id == 269) %>% 
+  mutate(placed_at = as.POSIXct(placed_at)) %>% 
   ggplot(aes(x = placed_at)) +
-  geom_freqpoly()
+  geom_freqpoly(binwidth = 365*24*60)
+```
+
+#### Trying to Make Models with Iteration
+```{r, eval=FALSE}
+by_day <- full_50 %>% select(placed_at, qty, sku_id) %>% 
+  filter(qty < 1001) %>% 
+  rename(ds = placed_at, y = qty) %>% 
+  group_by(ds, sku_id) %>% 
+  mutate(y = sum(y)) %>% 
+  unique()
+
+by_day %>% select(sku_id) %>% summarize(count = n_distinct(sku_id))
+
+## Sorting the data into sku_id dataframes
+full_50_splt <- by_day %>% group_by(sku_id) %>% group_split(.keep = FALSE)
+
+full_50_splt_keep <- by_day %>% group_by(sku_id) %>% group_split(.keep = TRUE)
+```
+
+```{r, eval=FALSE}
+dates <- tibble(ds = seq(as.Date('2022-08-16'), as.Date('2023-08-16'), by = 'days'), y = rep(NA, 366))
+
+forecasts <- c()
+fits <- c()
+mods <- c()
+
+for (x in 1:50) {
+  sku <- full_50_splt[[x]] %>% 
+    mutate(ds = as.Date(ds)) %>% 
+    select(ds, y) %>% 
+    arrange(ds, y) %>% 
+    rename(ds = ds, y = y)
+  
+  mod <- prophet(sku, yearly.seasonality = TRUE, fit = FALSE) %>% 
+    add_country_holidays(country_name = 'ID')
+  
+  mods[[x]] <- mod
+  
+  fit <- fit.prophet(df = sku, m = mod)
+  
+  fits[[x]] <- fit
+
+  forecast <- predict(fit, dates)
+  
+  forecasts[[x]] <- forecast
+}
 ```
 
