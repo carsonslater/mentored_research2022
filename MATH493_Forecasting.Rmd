@@ -102,7 +102,9 @@ full <- full %>% distinct(order_id, placed_at, merchant_id, sku_id, .keep_all = 
 # Collecting the top 50 SKU's
 qty_grp <- full %>% filter(!(order_id == 48674)) %>% # I filtered the outlier order
   group_by(sku_id) %>% 
-  summarize(tot_qty = sum(qty)) %>% 
+  summarize(tot_qty = sum(qty), avg_qty = mean(qty), med_qty = median(qty)) %>% 
+  mutate(diff = avg_qty - med_qty) %>%
+  filter(diff < 100) %>%
   arrange(desc(tot_qty)) %>% 
   slice(1:50)
 
@@ -140,29 +142,29 @@ library(prophet)
 
 #### Consider `sku_id` 269.
 ```{r, eval=FALSE}
+dates <- tibble(ds = seq(as.Date('2022-08-16'), as.Date('2023-08-16'), by = 'days'), y = rep(NA, 366))
+
 no_269 <- full_50 %>% filter(sku_id == 269) %>% 
   select(placed_at, qty) %>% 
-  filter(qty < 1001) %>% 
-  rename(ds = placed_at, y = qty)
+  rename(ds = placed_at, y = qty)%>% 
+  group_by(ds) %>% 
+  mutate(y = sum(y)) %>%
+  unique() 
 
-no_269 <- no_269 %>% group_by(ds) %>% 
-  mutate(y = sum(y)) %>% 
-  unique()
+no_269$floor <- 0
 
 mod_269 <- prophet(no_269, yearly.seasonality = TRUE, fit = FALSE) %>% 
   add_country_holidays(country_name = 'ID')
 
 fit_269 <- fit.prophet(mod_269, no_269)
 
-fit_269$train.holiday.names
-
-dates <- tibble(ds = seq(as.Date('2022-08-16'), as.Date('2023-08-16'), by = 'days'), y = rep(NA, 366))
-
 forecast_269 <- predict(fit_269, dates)
 
-prophet_plot_components(m = fit_269, forecast_269)
+#prophet_plot_components(m = fit_269, forecast_269)
 
 plot(fit_269, forecast_269)
+
+yhats <- exp(forecast_269$yhat)
 ```
 
 ```{r}
@@ -170,6 +172,31 @@ full_50 %>% filter(sku_id == 269) %>%
   mutate(placed_at = as.POSIXct(placed_at)) %>% 
   ggplot(aes(x = placed_at)) +
   geom_freqpoly(binwidth = 365*24*60)
+```
+
+### Using Alternative Syntax to Forecast `sku_id` 269.
+```{r}
+future_year <- make_future_dataframe(m = fit_269, periods = 365, freq = "day")
+future_year$floor <- 0
+forecast_269 <- predict(fit_269, future_year)
+plot(fit_269, forecast_269)
+
+future_month <- make_future_dataframe(m = fit_269, periods = 30, freq = "day")
+future_month$floor <- 0
+forecast_269 <- predict(fit_269, future_month)
+plot(fit_269, forecast_269)
+```
+
+#### Cross Validation Using Prophet
+```{r}
+# 62 days between the start of the data and a year our from the end of the data
+cv.269 <- cross_validation(m = fit_269, initial = 210, period = 30, horizon = 60, units = 'days')
+
+pm.269 <- performance_metrics(cv.269)
+
+pm.269 <- pm.269 %>% mutate(nrmse = scale(rmse))
+
+plot_cross_validation_metric(cv.269, metric = 'mdape')
 ```
 
 #### Trying to Make Models with Iteration
@@ -189,6 +216,7 @@ full_50_splt <- by_day %>% group_by(sku_id) %>% group_split(.keep = FALSE)
 full_50_splt_keep <- by_day %>% group_by(sku_id) %>% group_split(.keep = TRUE)
 ```
 
+### DO NOT RUN
 ```{r, eval=FALSE}
 dates <- tibble(ds = seq(as.Date('2022-08-16'), as.Date('2023-08-16'), by = 'days'), y = rep(NA, 366))
 
@@ -217,4 +245,6 @@ for (x in 1:50) {
   forecasts[[x]] <- forecast
 }
 ```
+
+
 
