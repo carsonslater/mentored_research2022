@@ -115,7 +115,8 @@ pie(rep(1,n), col=sample(col_vector, n))
 ### Finding the Top 50 SKU's by Total Volume
 ```{r}
 # Collecting the top 50 SKU's
-qty_grp <- full %>% group_by(sku_id) %>% 
+qty_grp <- full %>% filter(!(order_id == 48674)) %>% # I filtered the outlier order
+  group_by(sku_id) %>% 
   summarize(tot_qty = sum(qty)) %>% 
   arrange(desc(tot_qty)) %>% 
   slice(1:50)

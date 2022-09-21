@@ -160,9 +160,12 @@ fit_269 <- fit.prophet(mod_269, no_269)
 
 forecast_269 <- predict(fit_269, dates)
 
+forecast_269 <- forecast_269 %>% 
+  mutate(yhat = ifelse(yhat >= 0, yhat, 0), yhat_lower = ifelse(yhat_lower >= 0, yhat_lower, 0))
+
 #prophet_plot_components(m = fit_269, forecast_269)
 
-plot(fit_269, forecast_269)
+plot(fit_269, forecast_269) + ylim(0,500) + labs(title = "Forecast for SKU 269", x = "Date", y = "Quantity Ordered")
 
 yhats <- exp(forecast_269$yhat)
 ```

@@ -1,15 +1,24 @@
 ---
-title: "Exponential Smoothing"
+title: "SKU_1300_ExpSmooth"
 author: "Carson Slater"
-date: '2022-09-16'
+date: '2022-09-17'
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
 ```
+
 ```{r}
 library(tidymodels)
+library(tidyselect)
+library(forecast)
+library(lubridate)
+library(zoo)
 library(fpp2)
 ```
 
@@ -71,9 +80,6 @@ full <- full %>% mutate(year = as.factor(year),
 # Turning the timestamp into an actual date
 full <- full %>% mutate(placed_at = as.Date(placed_at))
 
-# Looking for duplicates orders
-dupes <- get_dupes(full, order_id, placed_at, merchant_id, sku_id)
-
 # Removing the 178 duplicate observations
 full <- full %>% distinct(order_id, placed_at, merchant_id, sku_id, .keep_all = TRUE)
 ```
@@ -99,42 +105,76 @@ full_50 %>% summarize(count = n_distinct(sku_id))
 ```
 
 ```{r}
-no_269 <- full_50 %>% filter(sku_id == 269) %>% 
+no_1300 <- full_50 %>% filter(sku_id == 1300) %>% 
   select(placed_at, qty) %>% 
   rename(ds = placed_at, y = qty)%>% 
   group_by(ds) %>% 
   mutate(y = sum(y)) %>%
   unique() 
 
-no_269 %>% ggplot(aes(x = ds, y = y)) +
+no_1300 %>% ggplot(aes(x = ds, y = y)) +
   geom_line()
 ```
 
+### Create a Time Series Object
 ```{r}
-startW <- as.numeric(strftime(head(no_269$ds, 1), format = "%W"))
-startD <- as.numeric(strftime(head(no_269$ds, 1) + 1, format =" %w")) 
-print(ts(data = no_269$y, frequency = 7, start = c(startW, startD)), calendar = T)
+no_1300 <- no_1300 %>%
+  complete(ds = seq.Date(min(no_1300$ds), max(no_1300$ds), by="day")) %>% unique()
 
-print(ts(data = no_269$y, frequency = 12, start = c(7, 2021)), calendar = T)
+# Finally, a time series df
+no_1300[is.na(no_1300)] <- 0
 
-# Make a time series object
-y <- ts(data = no_269$y, frequency = 7, start = c(startW, startD))
+myts <- ts(no_1300$y,     # my data
+           start = c(2022, as.numeric(format(no_1300$ds[1],"%j"))),
+           end = c(2022, as.numeric(format(no_1300$ds[141],"%j"))),
+           frequency = 141)
+```
 
-autoplot(y) + ggtitle("Time Plot: Quantity of SKU per Week") + ylab("Total of SKU Sold")
+### Additional Model Experimentation
+```{r}
+startW <- as.numeric(strftime(head(no_1300$ds, 1), format = "%W"))
+startD <- as.numeric(strftime(head(no_1300$ds, 1) + 1, format =" %w"))
 
-# Stationary transform the data
-y2 <- diff(y)
+print(ts(data = no_1300$y, frequency = 7, start = c(startW, startD)), calendar = T)
 
-# Viewing the transformed data: change in real data over time
-autoplot(y2)
+ts <- ts(data = no_1300$y, frequency = 7, start = c(startW, startD))
+```
 
-# Series appears trend-stationary (trend plot is flat)
 
-# Looking for weekly trends
-ggseasonplot(y2) + ylim(-50, 50)
+### Building a Benchmark Model
+```{r}
+############################
+# With unconvential method
+############################
+snaive_fit <- snaive(myts) ## Standard Deviation is 5861.95
 
-### Using the model
-fit_ets <- ets(y)
+print(summary(snaive_fit))
+
+autoplot(snaive_fit)
+
+checkresiduals(snaive_fit)
+
+############################
+# With weekly method
+############################
+wkly_snaive_fit <- snaive(ts) ## Standard Deviation is 5861.95
+
+print(summary(wkly_snaive_fit))
+
+autoplot(wkly_snaive_fit)
+
+checkresiduals(wkly_snaive_fit)
+
+snaive_fcst <- forecast(wkly_snaive_fit, h = 16)
+autoplot(snaive_fcst)
+```
+
+### With ETS
+```{r}
+############################
+# With unconvential method
+############################
+fit_ets <- ets(myts)
 
 print(summary(fit_ets))
 
@@ -142,15 +182,39 @@ autoplot(fit_ets)
 
 checkresiduals(fit_ets)
 
-### Using the difference data
+############################
+# With weekly method
+############################
 
-fit_ets2 <- ets(y2)
+wkly_fit_ets <- ets(ts) # SD is 3222.337
 
-print(summary(fit_ets2))
+print(summary(wkly_fit_ets))
 
-autoplot(fit_ets2)
+autoplot(wkly_fit_ets)
 
-checkresiduals(fit_ets2)
+checkresiduals(wkly_fit_ets)
+
+# Essentially the same
 ```
 
+### With ARIMA
+```{r}
+arima_fit <- auto.arima(ts, stepwise = FALSE, approximation = FALSE, trace = TRUE)
+
+print(arima_fit)
+
+plot(arima_fit)
+
+checkresiduals(arima_fit)
+
+arima_fcst <- forecast(arima_fit, h = 26)
+
+autoplot(arima_fcst)
+```
+
+```{r}
+fcst <- forecast(wkly_fit_ets, h = 365)
+autoplot(fcst)
+
+```
 
