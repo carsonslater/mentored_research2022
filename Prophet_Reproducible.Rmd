@@ -1,0 +1,246 @@
+---
+title: "Forecasting SKU Demand with Prophet"
+author: "Carson Slater"
+date: '2022-09-21'
+output: html_document
+header-includes:
+   - \usepackage{amsmath}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+```{r, include=FALSE}
+# Loading packages
+library(tidymodels)
+library(tinytex)
+library(stringr)
+library(janitor)
+library(glmnet)
+library(lubridate)
+library(knitr)
+library(mosaic)
+library(doParallel)
+```
+
+```{r, include=FALSE}
+# For parallel processing
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+```
+
+```{r, include=FALSE}
+# For parallel processing
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+```
+
+
+### Importing the Data
+```{r, include=TRUE}
+url <- "https://raw.githubusercontent.com/carsonslater/mentored_research2022/Main/new_baskets_full.csv"
+
+full <- read.csv(url)
+```
+
+### Tidying the Data
+```{r}
+# Finding Percentage of the Missing Data for each column.
+colMeans(is.na(full))*100
+# There is a very small proportion of missing data in these data 
+
+full <- full %>% mutate(id = as.factor(id), 
+                        order_id = as.factor(order_id), 
+                        merchant_id = as.factor(merchant_id), 
+                        sku_id = as.factor(sku_id), 
+                        top_cat_id = as.factor(top_cat_id), 
+                        sub_cat_id = as.factor(sub_cat_id))
+
+# Cleaning data so that R can read the time stamp
+full$placed_at = substr(full$placed_at, 1, nchar(full$placed_at)-4)
+
+# Changing the placed_by into a POSIXct variable type
+full$placed_at = as.POSIXct(full$placed_at)
+
+# Finding NA's
+full %>% 
+  filter(is.na(full$top_cat_id))
+
+# Removing the 11 NA's
+full <- full %>% 
+  filter(!is.na(full$top_cat_id))
+
+
+# Creating more columns with more date-specific information
+full <- full %>% mutate(year = format(full$placed_at, "%Y"),
+                        month = format(full$placed_at, "%m"),
+                        day = format(full$placed_at, "%d"),
+                        hour = format(full$placed_at, "%H"),
+                        minute = format(full$placed_at, "%M"),
+                        second = format(full$placed_at, "%S"),
+                        yday = yday(full$placed_at),
+                        wday = wday(full$placed_at),
+                        yweek = week(full$placed_at))
+
+# Creating factor variables for dates and times
+full <- full %>% mutate(year = as.factor(year),
+                        month = as.factor(month),
+                        day = as.factor(day),
+                        hour = as.factor(hour),
+                        minute = as.factor(minute),
+                        second = as.factor(second),
+                        yday = as.factor(yday),
+                        wday = as.factor(wday),
+                        yweek = as.factor(yweek))
+
+# Turning the timestamp into an actual date
+full <- full %>% 
+  mutate(placed_at = as.Date(placed_at))
+
+# Looking for duplicates orders
+dupes <- get_dupes(full, order_id, placed_at, merchant_id, sku_id)
+
+# Removing the 178 duplicate observations
+full <- full %>% 
+  distinct(order_id, placed_at, merchant_id, sku_id, .keep_all = TRUE)
+```
+
+### Finding the Top 50 SKU's by Total Volume
+```{r}
+# Collecting the top 50 SKU's
+qty_grp <- full %>% filter(!(order_id == 48674)) %>% # I filtered the outlier order
+  group_by(sku_id) %>% 
+  summarize(tot_qty = sum(qty), avg_qty = mean(qty), med_qty = median(qty)) %>% 
+  mutate(diff = avg_qty - med_qty) %>%
+  filter(diff < 100) %>%
+  arrange(desc(tot_qty)) %>% 
+  slice(1:50)
+
+# Creating a new data frame with only the top 50 SKU's by volume
+full_50 <- full %>% 
+  filter(full$sku_id %in% qty_grp$sku_id)
+
+head(full_50)
+
+# Checking if there are only 50 unique SKU's in full_50
+full_50 %>% summarize(count = n_distinct(sku_id))
+
+# Splitting Each Data Frame
+full_split <- full_50 %>% 
+  group_by(sku_id) %>% 
+  group_split()
+```
+
+```{r, eval=FALSE}
+library(prophet)
+```
+
+### Building Models
+`Prophet` uses an additive regression model with four main components:
+
+- A piecewise linear or logistic growth curve trend. Prophet automatically detects changes in trends by selecting changepoints from the data.
+- A yearly seasonal component modeled using Fourier series.
+- A weekly seasonal component using dummy variables.
+- A user-provided list of important holidays.
+
+The model looks like this:
+\[
+y(t) = g(t) + s(t) + h(t) + e(t)
+\]
+
+where,
+
+- $g(t)$ refers to trend (changes over a long period of time)
+- $s(t)$ refers to seasonality (periodic or short term changes)
+- $h(t)$ refers to effects of holidays to the forecast
+- $e(t)$ refers to the unconditional changes that is specific to a business or a person or a circumstance. It is also called the error term.
+- $y(t)$ is the forecast.
+
+Although prophet can fit a logistic growth model, its default and what we will be using for our purposes, is a piece-wise linear model,
+
+\[   
+y = \left\{
+\begin{array}{ll}
+     \beta_0 + \beta_1x, \hspace{2.5cm} x \leq c \\
+     \beta_0 - \beta_2c + (\beta_1 + \beta_2)x, \hspace{4mm}x > c
+\end{array} 
+\right. 
+\]
+
+We will fit forecasting models for different types of SKU's within the top 50.
+
+#### SKU 390
+```{r}
+# Preprocessing
+df <-  full_split[[7]] 
+
+df <- df %>% 
+  select(c(placed_at, qty)) %>% 
+  rename(ds = placed_at, y = qty) %>% 
+  group_by(ds) %>% 
+  summarise(y = sum(y), .groups = 'drop')
+
+# Creating an evaluation data frame
+eval <- df %>% filter(ds >= max(df$ds) - weeks(8)) %>% 
+  complete(ds = seq.Date(min(ds), max(ds), by="day")) %>% 
+  mutate(y = ifelse(is.na(y), 0, y)) #%>%
+  #slice(1:(n() - 1))
+
+orig_df <- df
+
+df <- df %>% filter(ds < max(df$ds) - weeks(8))
+```
+
+```{r}
+mod <- prophet(df, yearly.seasonality = TRUE, fit = FALSE) %>% 
+  add_country_holidays(country_name = 'ID')
+
+fit <- fit.prophet(mod, df)
+
+# 6 Months
+future <- make_future_dataframe(fit, periods = 8*7)
+
+# Make a forecast
+fcst <- predict(fit, future)
+
+##########################################################
+# Since we cannot have negaitve predictive quantities, 
+# I invert the upper confidence interval and set the 
+# negative yhats to zero
+##########################################################
+
+fcst <- fcst %>% mutate(diff = yhat_upper - yhat)
+
+fcst <- fcst %>%
+  mutate(yhat_upper = ifelse(yhat_upper >= 0, yhat_upper, diff)) %>% 
+  mutate(yhat = ifelse(yhat >= 0, yhat, 0), 
+         yhat_lower = ifelse(yhat_lower >= 0, yhat_lower, 0))
+
+# Final plot of forecast
+plot(fit, fcst)
+```
+
+```{r}
+# Model Evaluation
+pred <- fcst %>% filter(ds >= max(orig_df$ds) - weeks(8)) %>% 
+  select(ds, yhat_lower, yhat, yhat_upper)
+
+err_df <- tibble(pred$ds, eval$y, pred$yhat)
+
+colnames(err_df) <- c("ds", "y", "yhat")
+
+#library(Metrics)
+# Get RMSE
+Metrics::rmse(err_df$y, err_df$yhat)
+
+# Get SMAPE
+Metrics::smape(err_df$y, err_df$yhat)
+
+```
