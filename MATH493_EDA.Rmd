@@ -82,7 +82,18 @@ data_timecols <- data_timecols %>% mutate(year = as.factor(year),
 
 ```
 
+```{r, include=FALSE}
+# For visualization purposes
+library(RColorBrewer)
+n <- 50
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
 
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, 
+                           rownames(qual_col_pals)))
+
+# The color schema I am using
+pie(rep(1,n), col=sample(col_vector, n))
+```
 
 #### About the Data
 FMCG's are fast-moving, consumer goods. Market basket analysis! Basket is a consumer's purchases at a given time.
@@ -107,17 +118,28 @@ data_timecols %>% ggplot(aes(x = qty)) +
   facet_wrap(~ month)
 ```
 
-#### Volume of Goods Sold Each Year Week
+#### Volume of Goods Sold Each Year Month
 ```{r}
-data_timecols %>% ggplot(aes(x = yweek, y= qty)) +
-  geom_col() + ylim(0,10000)
+data_timecols %>% filter(placed_at >= max(data_timecols$placed_at) - months(12)) %>% 
+  ggplot(aes(x = month, y= qty, fill = top_cat_id)) +
+  geom_col() + 
+  ylim(0,150000) + 
+  labs(title = "Total Volume of FMCG Units Sold Each Month",
+       x = "Month",
+       y = "Volume",
+       fill = "Category of Good",
+       caption = "** Categories are obfuscated for privacy concerns **") +
+  theme_minimal() +
+  theme(plot.caption.position = "plot",
+        plot.caption = element_text(hjust = 0)) +
+  scale_fill_manual(values = col_vector)
 ```
 
 #### Busiest times of the year - according to the data
 ```{r}
 data %>%
   ggplot(aes(x = placed_at)) + 
-  geom_freqpoly(binwidth = 86400)
+  geom_freqpoly(binwidth = 52*7)
 ```
 
 #### Average Price Paid per Purchase for Merchants
