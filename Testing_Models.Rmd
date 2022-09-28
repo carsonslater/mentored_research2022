@@ -2,7 +2,9 @@
 title: "Exponential Smoothing"
 author: "Carson Slater"
 date: '2022-09-16'
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -77,6 +79,20 @@ Three types of model algorithms offered in the `forecast` package are a seasonal
   - ARIMA (Autoregressive Integrated Moving Average)
 
 In this markdown we try to forecast using these models in the `forecast` package on an SKU from our cleaned data.
+
+### Building a Benchmark Model: Seasonal Naive
+```{r}
+############################
+# With unconvential method
+############################
+snaive_fit <- snaive(y) ## Standard Deviation is 5861.95
+
+print(summary(snaive_fit))
+
+autoplot(snaive_fit)
+
+checkresiduals(snaive_fit)
+```
 
 ### Exponential Smoothing
 ```{r}
