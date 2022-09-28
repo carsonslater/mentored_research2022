@@ -31,90 +31,9 @@ cl <- makePSOCKcluster(all_cores)
 registerDoParallel(cl)
 ```
 
-
-### Importing the Data
-```{r, include=TRUE}
-url <- "https://raw.githubusercontent.com/carsonslater/mentored_research2022/Main/new_baskets_full.csv"
-
-full <- read.csv(url)
-```
-
-### Tidying the Data
+### Loading the Data
 ```{r}
-# Finding Percentage of the Missing Data for each column.
-colMeans(is.na(full))*100
-# There is a very small proportion of missing data in these data 
-
-full <- full %>% mutate(id = as.factor(id), 
-                        order_id = as.factor(order_id), 
-                        merchant_id = as.factor(merchant_id), 
-                        sku_id = as.factor(sku_id), 
-                        top_cat_id = as.factor(top_cat_id), 
-                        sub_cat_id = as.factor(sub_cat_id))
-
-# Cleaning data so that R can read the time stamp
-full$placed_at = substr(full$placed_at, 1, nchar(full$placed_at)-4)
-
-# Changing the placed_by into a POSIXct variable type
-full$placed_at = as.POSIXct(full$placed_at)
-
-# Finding NA's
-full %>% filter(is.na(full$top_cat_id))
-
-# Removing the 11 NA's
-full <- full %>% filter(!is.na(full$top_cat_id))
-
-
-# Creating more columns with more date-specific information
-full <- full %>% mutate(year = format(full$placed_at, "%Y"),
-                        month = format(full$placed_at, "%m"),
-                        day = format(full$placed_at, "%d"),
-                        hour = format(full$placed_at, "%H"),
-                        minute = format(full$placed_at, "%M"),
-                        second = format(full$placed_at, "%S"),
-                        yday = yday(full$placed_at),
-                        wday = wday(full$placed_at),
-                        yweek = week(full$placed_at))
-
-# Creating factor variables for dates and times
-full <- full %>% mutate(year = as.factor(year),
-                        month = as.factor(month),
-                        day = as.factor(day),
-                        hour = as.factor(hour),
-                        minute = as.factor(minute),
-                        second = as.factor(second),
-                        yday = as.factor(yday),
-                        wday = as.factor(wday),
-                        yweek = as.factor(yweek))
-
-# Turning the timestamp into an actual date
-full <- full %>% mutate(placed_at = as.Date(placed_at))
-
-# Looking for duplicates orders
-dupes <- get_dupes(full, order_id, placed_at, merchant_id, sku_id)
-
-# Removing the 178 duplicate observations
-full <- full %>% distinct(order_id, placed_at, merchant_id, sku_id, .keep_all = TRUE)
-```
-
-### Finding the Top 50 SKU's by Total Volume
-```{r}
-# Collecting the top 50 SKU's
-qty_grp <- full %>% filter(!(order_id == 48674)) %>% # I filtered the outlier order
-  group_by(sku_id) %>% 
-  summarize(tot_qty = sum(qty), avg_qty = mean(qty), med_qty = median(qty)) %>% 
-  mutate(diff = avg_qty - med_qty) %>%
-  filter(diff < 100) %>%
-  arrange(desc(tot_qty)) %>% 
-  slice(1:50)
-
-# Creating a new data frame with only the top 50 SKU's by volume
-full_50 <- full %>% filter(full$sku_id %in% qty_grp$sku_id)
-
-head(full_50)
-
-# Checking if there are only 50 unique SKU's in full_50
-full_50 %>% summarize(count = n_distinct(sku_id))
+load("SKU50.Rdata")
 ```
 
 ### Loading the `prophet` API
