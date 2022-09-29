@@ -85,7 +85,7 @@ In this markdown we try to forecast using these models in the `forecast` package
 ############################
 # With unconvential method
 ############################
-snaive_fit <- snaive(y) ## Standard Deviation is 5861.95
+snaive_fit <- snaive(y) ## Standard Deviation is 226.7402
 
 print(summary(snaive_fit))
 
