@@ -1,0 +1,98 @@
+---
+title: "Top 50 SKU's EDA and Preliminary Modeling Steps"
+author: "Carson Slater"
+date: '2022-09-10'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+```{r, include=FALSE}
+# Loading packages
+library(tidymodels)
+library(stringr)
+library(janitor)
+library(glmnet)
+library(lubridate)
+library(knitr)
+library(mosaic)
+```
+
+### The Background
+
+This is the **third** .Rmd file dedicated to EDA for my poster project in the Fall of 2022 aimed at forecasting demand for particular FMCS data. FMCG's are fast-moving, consumer goods, meaning that lots of research can be done here that is market basket analysis! A basket is a consumer's purchases at a given time.
+
+#### The Problem
+Expectation of demand largely influences the movement of consumer goods within a free market economic system, and managing the flow by expectation and optimization can help reduce cost and best steward FMCG's. We hope to build a model to forecast SKU demand for a particular Indonesian distribution center (DC). We selected their top 50 most popular SKU's (by total volume) over a given series of time, and aim to build model that can forecast up to a month in advance optimal amount of these goods they will need to have in stock during that period.
+
+### Loading the Data
+```{r}
+load("SKU50.Rdata")
+```
+
+### Loading color palette for visualization.
+```{r, include=FALSE}
+# For visualization purposes
+# I need a LOT of colors for 50 different SKU's
+library(RColorBrewer)
+n <- 50
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, 
+                           rownames(qual_col_pals)))
+
+# The color schema I am using
+pie(rep(1,n), col=sample(col_vector, n))
+```
+
+#### Adjusted Questions
+The prior two EDA `.Rmd` files contained a list of general exploratory questions. Here we have posed similar yet adjusted questions that aim to uncover more relevant information, since we have a narrowed goal and problem.
+
+ - What kinds of goods are sold the most frequently and at the highest volume?
+ - What are the average times between purchases for each good?
+ - Can we detect any automated purchasing?
+ - Which goods are sold at higher quantities?
+ - How many total merchants are represented in this subset of the data.?
+ - How frequent do these merchants purchase from this DC?
+ - Were these merchants customers throughout the entire time these data were collected?
+ - What did these merchants purchase? How much? At what price?
+ - Does price fluctuate for each SKU throughout the time series? How much?
+ - What are the most costly items and how does that correlate with time between the prior purchase?
+
+#### These SKU's which are sold at the highest volume on average?
+```{r}
+first_25 <- head(qty_grp, 25)
+last_25 <- tail(qty_grp, 25)
+
+med_qty_grp <- full_50 %>% 
+  group_by(sku_id) %>% 
+  summarize(med_qty = median(qty)) %>% 
+  arrange(desc(med_qty))
+
+avg_qty_grp <- full_50 %>% 
+  group_by(sku_id) %>% 
+  summarize(avg_qty = mean(qty)) %>% 
+  arrange(desc(avg_qty))
+```
+
+```{r}
+# Plots - not very helpful but they were made in my EDA so for honesty purposes I have chosen to keep them.
+full_50 %>% filter(full_50$sku_id %in% first_25$sku_id) %>% 
+  ggplot(aes(x = sku_id, y = qty, fill = sku_id)) +
+  geom_boxplot(color = "black") + 
+  ylim(0, 300) + scale_fill_manual(values = col_vector)
+
+full_50 %>% filter(full_50$sku_id %in% last_25$sku_id) %>% 
+  ggplot(aes(x = sku_id, y = qty, fill = sku_id)) +
+  geom_boxplot(color = "black") + 
+  ylim(0, 300) + scale_fill_manual(values = col_vector)
+```
+
+There appears to be a confounding instance, where SKU 277 has the highest average quantity per purchase, but there appears to only be one or two very high quantity orders for this particular good. Overall, SKU 1300 is leading the charge. In particular, we discovered two orders that we will count as outliers for our data.
+
+

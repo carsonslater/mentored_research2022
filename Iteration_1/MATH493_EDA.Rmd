@@ -1,0 +1,182 @@
+---
+title: "MATH 493 EDA"
+author: "Carson Slater"
+date: '2022-08-26'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+```{r, include=FALSE}
+# Loading packages
+library(tidymodels)
+library(stringr)
+library(glmnet)
+library(lubridate)
+library(knitr)
+library(mosaic)
+library(doParallel)
+```
+
+```{r, include=FALSe}
+# For parallel processing
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+```
+
+# Main Research Topic
+Can we forecast the demand of particular SKU units up to a month in advance to help a Distribution Center cost-effectively replenish inventory?
+
+### Tidying Data
+```{r}
+# Reading the data
+
+urlfile <- 'https://raw.githubusercontent.com/carsonslater/mentored_research2022/Main/baskets_sample_random_10.csv'
+data <- read.csv(urlfile) %>% mutate(id = as.factor(id), 
+                                     order_id = as.factor(order_id), 
+                                     merchant_id = as.factor(merchant_id), 
+                                     sku_id = as.factor(sku_id), 
+                                     top_cat_id = as.factor(top_cat_id), 
+                                     sub_cat_id = as.factor(sub_cat_id))
+
+# Cleaning data so that R can read the time stamp
+data$placed_at = substr(data$placed_at, 1, nchar(data$placed_at)-4)
+
+# Changing the placed_by into a POSIXct variable type
+data$placed_at = as.POSIXct(data$placed_at)
+
+# Finding NA's
+data %>% filter(is.na(data$top_cat_id))
+
+# Removing the 7 NA's
+data <- data %>% filter(!is.na(data$top_cat_id))
+
+
+# Creating more columns with more date-specific information
+data_timecols <- data %>% mutate(year = format(data$placed_at, "%Y"),
+                                 month = format(data$placed_at, "%m"),
+                                 day = format(data$placed_at, "%d"),
+                                 hour = format(data$placed_at, "%H"),
+                                 minute = format(data$placed_at, "%M"),
+                                 second = format(data$placed_at, "%S"),
+                                 yday = yday(data$placed_at),
+                                 wday = wday(data$placed_at),
+                                 yweek = week(data$placed_at))
+
+data_timecols <- data_timecols %>% mutate(year = as.factor(year),
+                                 month = as.factor(month),
+                                 day = as.factor(day),
+                                 hour = as.factor(hour),
+                                 minute = as.factor(minute),
+                                 second = as.factor(second),
+                                 yday = as.factor(yday),
+                                 wday = as.factor(wday),
+                                 yweek = as.factor(yweek))
+
+```
+
+```{r, include=FALSE}
+# For visualization purposes
+library(RColorBrewer)
+n <- 50
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, 
+                           rownames(qual_col_pals)))
+
+# The color schema I am using
+pie(rep(1,n), col=sample(col_vector, n))
+```
+
+#### About the Data
+FMCG's are fast-moving, consumer goods. Market basket analysis! Basket is a consumer's purchases at a given time.
+
+### Questions We Have
+ - We are going to ask a series of questions:
+     - What are the busiest times of the year to make note of?
+     - What kinds of goods are sold the most frequently?
+     - What kinds of goods are sold at higher quantities?
+     - What are the average quantities sold for each SKU?
+     - Are any of the types of goods sold at higher rates during certain parts of the year?
+     - Can we detect any automated purchasing?
+     - How many total merchants is this distribution center (DC) servicing?
+     - How frequent do these merchants purchase from this DC?
+     - Were these merchants customers throughout the entire time these data were collected?
+     - What did these merchants purchase? How much?
+     
+#### Distribution of Quantity
+```{r}
+data_timecols %>% ggplot(aes(x = qty)) +
+  geom_histogram() + xlim(0, 200) + ylim(0, 200) +
+  facet_wrap(~ month)
+```
+
+#### Volume of Goods Sold Each Year Month
+```{r}
+data_timecols %>% filter(placed_at >= max(data_timecols$placed_at) - months(12)) %>% 
+  ggplot(aes(x = month, y= qty, fill = top_cat_id)) +
+  geom_col() + 
+  ylim(0,150000) + 
+  labs(title = "Total Volume of FMCG Units Sold Each Month",
+       x = "Month",
+       y = "Volume",
+       fill = "Category of Good",
+       caption = "** Categories are obfuscated for privacy concerns **") +
+  theme_minimal() +
+  theme(plot.caption.position = "plot",
+        plot.caption = element_text(hjust = 0)) +
+  scale_fill_manual(values = col_vector)
+```
+
+#### Busiest times of the year - according to the data
+```{r}
+data %>%
+  ggplot(aes(x = placed_at)) + 
+  geom_freqpoly(binwidth = 52*7)
+```
+
+#### Average Price Paid per Purchase for Merchants
+```{r}
+length(unique(data_timecols$merchant_id))
+mer_by_order <- data_timecols %>% group_by(order_id, merchant_id) %>% summarise(order_tot = sum(price))
+avg_exp <- mer_by_order %>% 
+  group_by(merchant_id) %>% 
+  summarise(avg_exp = mean(order_tot))
+
+head(avg_exp) %>% kable()
+favstats(mer_by_order$order_tot)
+```
+
+#### Average Quantity of SKU/Categories per Purchase
+```{r}
+# no need to group_by `order_id` because each order only has
+length(unique(data_timecols$sku_id))
+sku_by_qty <- data_timecols %>% group_by(sku_id) %>% 
+  summarise(avg_qty = mean(qty), med_qty = median(qty), count = n())
+head(sku_by_qty)
+
+length(unique(data_timecols$top_cat_id))
+top_cat_by_qty <- data_timecols %>% group_by(top_cat_id) %>% 
+  summarise(avg_qty = mean(qty), med_qty = median(qty), count = n())
+head(top_cat_by_qty)
+
+length(unique(data_timecols$sub_cat_id))
+sub_cat_by_qty <- data_timecols %>% group_by(sub_cat_id) %>% 
+  summarise(avg_qty = mean(qty), med_qty = median(qty), count = n()) 
+head(sub_cat_by_qty)
+```
+This data is skewed - lots of the medians have large disparities from the mean.
+
+#### Building a Regression Model
+```{r, eval = FALSE}
+lm <- glm(qty ~ order_id + merchant_id + sku_id + top_cat_id + sub_cat_id + price + year + hour + yday + wday, data = data_timecols, family = "gaussian")
+
+# This outputted too many coefficients, which lends to too many confounding points in the data.
+```

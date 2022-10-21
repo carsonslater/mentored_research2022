@@ -1,0 +1,207 @@
+---
+title: "Forecasting SKU Demand with Prophet"
+author: "Carson Slater"
+date: '2022-09-21'
+output: html_document
+header-includes:
+   - \usepackage{amsmath}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+```{r, include=FALSE}
+# Loading packages
+library(tidymodels)
+library(tinytex)
+library(stringr)
+library(janitor)
+library(glmnet)
+library(lubridate)
+library(knitr)
+library(mosaic)
+library(doParallel)
+```
+
+```{r, include=FALSE}
+# For parallel processing
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+```
+
+### Loading the Data
+```{r}
+load("SKU50.Rdata")
+```
+
+```{r}
+# Splitting Each Data Frame
+full_split <- full_50 %>% 
+  group_by(sku_id) %>% 
+  group_split()
+```
+
+### Making a Plot
+```{r}
+# For visualization purposes
+library(RColorBrewer)
+n <- 50
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, 
+                           rownames(qual_col_pals)))
+
+# The color schema I am using
+pie(rep(1,n), col=sample(col_vector, n))
+```
+
+```{r}
+qty_grp %>% ggplot(aes(y = sku_id, x = diff, fill = sku_id)) +
+  geom_col(color = "black", show.legend = FALSE) +
+  labs(title = "Desparity Between Mean and Median Order Volumes for the Top 50 SKU's",
+       x = "SKU Identification Number",
+       y = "Difference Between Mean and Median") +
+  theme_minimal() +
+  scale_fill_manual(values = col_vector)
+
+qty_grp %>% ggplot(aes(x = avg_qty, y = med_qty)) +
+  geom_point(color = "orange", show.legend = FALSE) +
+  labs(title = "Desparity Between Mean and Median Order Volumes for the Top 50 SKU's",
+       x = "Mean Order Volume",
+       y = "Median Order Volume") +
+  theme_minimal()
+```
+
+```{r, eval=FALSE}
+library(prophet)
+```
+
+### Building Models
+`Prophet` uses an additive regression model with four main components:
+
+- A piecewise linear or logistic growth curve trend. Prophet automatically detects changes in trends by selecting changepoints from the data.
+- A yearly seasonal component modeled using Fourier series.
+- A weekly seasonal component using dummy variables.
+- A user-provided list of important holidays.
+
+The model looks like this:
+\[
+y(t) = g(t) + s(t) + h(t) + e(t)
+\]
+
+where,
+
+- $g(t)$ refers to trend (changes over a long period of time)
+- $s(t)$ refers to seasonality (periodic or short term changes)
+- $h(t)$ refers to effects of holidays to the forecast
+- $e(t)$ refers to the unconditional changes that is specific to a business or a person or a circumstance. It is also called the error term.
+- $y(t)$ is the forecast.
+
+Although prophet can fit a logistic growth model, its default and what we will be using for our purposes, is a piece-wise linear model,
+
+\[   
+y = \left\{
+\begin{array}{ll}
+     \beta_0 + \beta_1x, \hspace{2.5cm} x \leq c \\
+     \beta_0 - \beta_2c + (\beta_1 + \beta_2)x, \hspace{4mm}x > c
+\end{array} 
+\right. 
+\]
+
+We can fit forecasting models for different types of SKU's within the top 50.
+
+### Code for Analyzing an SKU Forecast
+```{r}
+# Preprocessing
+df <-  full_split[[4]] # Choose any number in 1:50 to forecast a relevant SKU
+
+df <- df %>% 
+  select(c(placed_at, qty)) %>% 
+  rename(ds = placed_at, y = qty) %>% 
+  group_by(ds) %>% 
+  summarise(y = sum(y), .groups = 'drop')
+
+# Creating an evaluation data frame
+eval <- df %>% filter(ds >= max(df$ds) - weeks(8)) %>% 
+  complete(ds = seq.Date(min(ds), max(ds), by="day")) %>% 
+  mutate(y = ifelse(is.na(y), 0, y))
+  
+eval <- eval %>% slice(1:(n() - 1))
+
+orig_df <- df
+
+df <- df %>% filter(ds < max(df$ds) - weeks(8))
+```
+
+```{r}
+mod <- prophet(df, yearly.seasonality = TRUE, fit = FALSE, interval.width = 0.7) %>% 
+  add_country_holidays(country_name = 'ID')
+
+fit <- fit.prophet(mod, df)
+
+# 6 Months
+future <- make_future_dataframe(fit, periods = 8*7)
+
+# Make a forecast
+fcst <- predict(fit, future)
+
+##########################################################
+# Since we cannot have negaitve predictive quantities, 
+# I invert the upper confidence interval and set the 
+# negative yhats to zero
+##########################################################
+
+fcst <- fcst %>% mutate(diff = yhat_upper - yhat)
+
+fcst <- fcst %>%
+  mutate(yhat_upper = ifelse(yhat_upper >= 0, yhat_upper, diff)) %>% 
+  mutate(yhat = ifelse(yhat >= 0, yhat, 0), 
+         yhat_lower = ifelse(yhat_lower >= 0, yhat_lower, 0))
+
+# Final plot of forecast
+plot(fit, fcst) + 
+  add_changepoints_to_plot(m = fit, cp_color = "orange") +
+  ylim(0, 1750) +
+  labs(title = "Fitted Model and Forecast of an SKU",
+       x = "Date",
+       y = "Volume Purchased") +
+  theme_minimal()
+```
+
+```{r}
+# Model Evaluation
+pred <- fcst %>% filter(ds >= max(orig_df$ds) - weeks(8)) %>% 
+  select(ds, yhat_lower, yhat, yhat_upper)
+
+err_df <- tibble(pred$ds, eval$y, pred$yhat)
+
+colnames(err_df) <- c("ds", "y", "yhat")
+
+err_df <- err_df %>% mutate(resid = y - yhat)
+
+#library(Metrics)
+# Get RMSE
+Metrics::rmse(err_df$y, err_df$yhat)
+
+# Get SMAPE
+Metrics::smape(err_df$y, err_df$yhat) # can be infinity if predicted\
+# values in denominator are close to 1
+
+err_df %>% 
+  ggplot(aes(x = resid)) +
+  geom_histogram(binwidth = 50, 
+                 fill = "orange", 
+                 color = "grey") +
+  #xlim(-650,100) +
+  labs(title = "Residual Plot",
+       x = "Residual Value",
+       y = "Frequency",
+       caption = "SKU #200") +
+  theme_minimal()
+```
