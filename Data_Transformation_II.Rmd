@@ -92,10 +92,20 @@ From my first iteration I learned that there is no 'one size fits all' forecasti
 
 ```{r}
 # Creating a data frame with the summary statistics for each SKU
-agg_vol <- df %>%
+sku_cnt <- df %>% count(sku_id) %>% filter(n >= 20)
+  
+sum_stats <- df %>% filter(df$sku_id %in% sku_cnt$sku_id) %>% 
   group_by(sku_id) %>% 
-  summarize(tot_qty = sum(qty), ) %>% 
-  arrange(desc(tot_qty))
+  summarize(tot_vol = sum(qty), 
+            avg_qty = mean(qty),
+            quartile1 = quantile(qty, 0.25),
+            quartile3 = quantile(qty, 0.75),
+            med_qty = median(qty),
+            min = min(qty), 
+            max = max(qty),
+            range = range(qty)) %>% 
+  filter(range != 1) %>% 
+  arrange(desc(tot_vol))
 ```
 
 
