@@ -88,11 +88,13 @@ df <- df %>% distinct(order_id, placed_at, merchant_id, sku_id, .keep_all = TRUE
 ```
 
 ### Exploratory Data Analysis
+From my first iteration I learned that there is no 'one size fits all' forecasting model. I want to see if I can create a data frame that will contain all of the summary statistics for each SKU in a data set, containing range, mean order volume, median order volume, etc. 
+
 ```{r}
-# Creating a data frame with the aggregated total volumes
+# Creating a data frame with the summary statistics for each SKU
 agg_vol <- df %>%
   group_by(sku_id) %>% 
-  summarize(tot_qty = sum(qty)) %>% 
+  summarize(tot_qty = sum(qty), ) %>% 
   arrange(desc(tot_qty))
 ```
 
