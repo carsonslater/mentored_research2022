@@ -24,3 +24,77 @@ library(knitr)
 library(mosaic)
 library(doParallel)
 ```
+```{r}
+# Insert pathname below to load any data
+path <- "/Users/carson/Documents/Wheaton Senior Year/Fall 2022/Mentored Research/new_baskets_adhie.csv"
+
+df <- read.csv(path)
+```
+
+# Data Transformation Steps for the `Prophet` Modeling Process
+### Preparing the Data with Robust Code (For Awantunai Data)
+```{r}
+# Finding Percentage of the Missing Data for each column.
+colMeans(is.na(df))*100
+# There is a very small proportion of missing data in these data 
+
+df <- df %>% mutate(id = as.factor(id), 
+                        order_id = as.factor(order_id), 
+                        merchant_id = as.factor(merchant_id), 
+                        sku_id = as.factor(sku_id), 
+                        top_cat_id = as.factor(top_cat_id), 
+                        sub_cat_id = as.factor(sub_cat_id))
+
+# Cleaning data so that R can read the time stamp
+df$placed_at = substr(df$placed_at, 1, nchar(df$placed_at)-4)
+
+# Changing the placed_by into a POSIXct variable type
+df$placed_at = as.POSIXct(df$placed_at)
+
+# Finding NA's
+df %>% filter(is.na(df$top_cat_id))
+
+# Removing the 11 NA's
+df <- df %>% filter(!is.na(df$top_cat_id))
+
+
+# Creating more columns with more date-specific information
+df <- df %>% mutate(year = format(df$placed_at, "%Y"),
+                        month = format(df$placed_at, "%m"),
+                        day = format(df$placed_at, "%d"),
+                        hour = format(df$placed_at, "%H"),
+                        minute = format(df$placed_at, "%M"),
+                        second = format(df$placed_at, "%S"),
+                        yday = yday(df$placed_at),
+                        wday = wday(df$placed_at),
+                        yweek = week(df$placed_at))
+
+# Creating factor variables for dates and times
+df <- df %>% mutate(year = as.factor(year),
+                        month = as.factor(month),
+                        day = as.factor(day),
+                        hour = as.factor(hour),
+                        minute = as.factor(minute),
+                        second = as.factor(second),
+                        yday = as.factor(yday),
+                        wday = as.factor(wday),
+                        yweek = as.factor(yweek))
+
+# Looking for duplicates orders
+dupes <- get_dupes(df, order_id, placed_at, merchant_id, sku_id)
+
+# Removing the duplicate observations
+df <- df %>% distinct(order_id, placed_at, merchant_id, sku_id, .keep_all = TRUE)
+```
+
+### Exploratory Data Analysis
+```{r}
+# Creating a data frame with the aggregated total volumes
+agg_vol <- df %>%
+  group_by(sku_id) %>% 
+  summarize(tot_qty = sum(qty)) %>% 
+  arrange(desc(tot_qty))
+```
+
+
+
