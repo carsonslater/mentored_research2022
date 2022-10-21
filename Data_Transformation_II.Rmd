@@ -1,0 +1,26 @@
+---
+title: 'Data Transformation: Iteration 2'
+author: "Carson Slater"
+date: '2022-10-21'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+```{r, include=FALSE}
+# Loading packages
+library(tidymodels)
+library(stringr)
+library(janitor)
+library(glmnet)
+library(lubridate)
+library(knitr)
+library(mosaic)
+library(doParallel)
+```
