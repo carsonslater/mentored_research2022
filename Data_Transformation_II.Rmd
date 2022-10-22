@@ -117,8 +117,44 @@ Here I think I have computed some summary statistics for these data. I want to d
 
 # total volume
 sum_stats %>% arrange(desc(tot_vol)) %>% head(15) %>% kable()
+
+sku_cnt %>% arrange(desc(n)) %>% head(5) %>% kable()
+
+sum_stats %>% filter(sku_id == 1488)
+sum_stats %>% filter(sku_id == 859)
+sum_stats %>% filter(sku_id == 1497)
+sum_stats %>% filter(sku_id == 866)
+sum_stats %>% filter(sku_id == 976)
+# most of these high frequency SKU's have very low variability in order quantites
+
+sum_stats %>% arrange(desc(med_qty), desc(variance))
 ```
 
+I need to transform the data and aggregate by day each order volume.
+
+```{r}
+by_day <- df %>% select(placed_at, qty, sku_id) %>% 
+  rename(ds = placed_at, y = qty) %>%
+  mutate(ds = as.Date(ds)) %>% 
+  group_by(ds, sku_id) %>% 
+  mutate(y = sum(y)) %>% 
+  unique()
+
+by_day_stats <- by_day %>% 
+  mutate(n = count(sku_id)) %>% 
+  group_by(sku_id) %>%
+  summarize(tot_vol = sum(y),
+            avg_qty = mean(y),
+            variance = var(y),
+            quartile1 = quantile(y, 0.25),
+            quartile3 = quantile(y, 0.75),
+            med_qty = median(y),
+            min = min(y), 
+            max = max(y),
+            range = max - min) %>% 
+  distinct %>% 
+  arrange(desc(tot_vol))
+```
 
 
 
