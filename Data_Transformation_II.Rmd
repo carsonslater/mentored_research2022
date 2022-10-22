@@ -95,18 +95,31 @@ From my first iteration I learned that there is no 'one size fits all' forecasti
 sku_cnt <- df %>% count(sku_id) %>% filter(n >= 20)
   
 sum_stats <- df %>% filter(df$sku_id %in% sku_cnt$sku_id) %>% 
-  group_by(sku_id) %>% 
-  summarize(tot_vol = sum(qty), 
+  mutate(n = count(sku_id)) %>% 
+  group_by(sku_id) %>%
+  summarize(tot_vol = sum(qty),
             avg_qty = mean(qty),
+            variance = var(qty),
             quartile1 = quantile(qty, 0.25),
             quartile3 = quantile(qty, 0.75),
             med_qty = median(qty),
             min = min(qty), 
             max = max(qty),
-            range = range(qty)) %>% 
-  filter(range != 1) %>% 
+            range = max - min) %>% 
+  distinct %>% 
   arrange(desc(tot_vol))
 ```
+
+Here I think I have computed some summary statistics for these data. I want to dive deeper into these data to see if there are any noteworthy finds for each SKU.
+
+```{r}
+# run these to find interesting queries
+
+# total volume
+sum_stats %>% arrange(desc(tot_vol)) %>% head(15) %>% kable()
+```
+
+
 
 
 
