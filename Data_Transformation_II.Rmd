@@ -24,7 +24,7 @@ library(knitr)
 library(mosaic)
 library(doParallel)
 ```
-```{r}
+```{r, eval=FALSE}
 # Insert pathname below to load any data
 path <- "/Users/carson/Documents/Wheaton Senior Year/Fall 2022/Mentored Research/new_baskets_adhie.csv"
 
@@ -33,7 +33,7 @@ df <- read.csv(path)
 
 # Data Transformation Steps for the `Prophet` Modeling Process
 ### Preparing the Data with Robust Code (For Awantunai Data)
-```{r}
+```{r, eval=FALSE}
 # Finding Percentage of the Missing Data for each column.
 colMeans(is.na(df))*100
 # There is a very small proportion of missing data in these data 
@@ -49,7 +49,7 @@ df <- df %>% mutate(id = as.factor(id),
 df$placed_at = substr(df$placed_at, 1, nchar(df$placed_at)-4)
 
 # Changing the placed_by into a POSIXct variable type
-df$placed_at = as.POSIXct(df$placed_at)
+df$placed_at = as.Date(df$placed_at)
 
 # Finding NA's
 df %>% filter(is.na(df$top_cat_id))
@@ -90,7 +90,7 @@ df <- df %>% distinct(order_id, placed_at, merchant_id, sku_id, .keep_all = TRUE
 ### Exploratory Data Analysis
 From my first iteration I learned that there is no 'one size fits all' forecasting model. I want to see if I can create a data frame that will contain all of the summary statistics for each SKU in a data set, containing range, mean order volume, median order volume, etc. 
 
-```{r}
+```{r, eval=FALSE}
 # Creating a data frame with the summary statistics for each SKU
 sku_cnt <- df %>% count(sku_id) %>% filter(n >= 20)
   
@@ -112,9 +112,7 @@ sum_stats <- df %>% filter(df$sku_id %in% sku_cnt$sku_id) %>%
 
 Here I think I have computed some summary statistics for these data. I want to dive deeper into these data to see if there are any noteworthy finds for each SKU.
 
-```{r}
-# run these to find interesting queries
-
+```{r, eval=FALSE}
 # total volume
 sum_stats %>% arrange(desc(tot_vol)) %>% head(15) %>% kable()
 
@@ -132,7 +130,7 @@ sum_stats %>% arrange(desc(med_qty), desc(variance))
 
 I need to transform the data and aggregate by day each order volume.
 
-```{r}
+```{r, eval=FALSE}
 by_day <- df %>% select(placed_at, qty, sku_id) %>% 
   rename(ds = placed_at, y = qty) %>%
   mutate(ds = as.Date(ds)) %>% 
@@ -156,6 +154,15 @@ by_day_stats <- by_day %>%
   arrange(desc(tot_vol))
 ```
 
+```{r, eval=FALSE}
+save.image("Data_Iteration2.Rdata")
+```
+```{r, eval=FALSE}
+load("Data_Iteration2.Rdata")
+```
 
+#### HALF-BAKED IDEA
+Detect out liars by computing the 90-10 interval. Any outside of that can be ignored.
 
+*I need to revisit this idea and make modifications*
 
