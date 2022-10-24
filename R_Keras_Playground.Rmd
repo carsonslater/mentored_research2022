@@ -1,0 +1,60 @@
+---
+title: "Keras Playground"
+author: "Carson Slater"
+date: '2022-10-24'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+### Introduction
+Some of this was taken from [this article](https://www.kaggle.com/code/davidchilders/time-series-prediction-in-r-keras/notebook) from Kaggle.
+
+I created this .Rmd file to play around with `Keras`, because every time I tried to import `Keras` in my jupyter notebook, my kernel crashed and I was unsure how to fix it without having to search the depths of my hard drive to solve the probable path issues.
+
+```{r}
+library(tidyverse)
+library(keras)
+library(foreign) #Read files in Stata .dta format
+library(reticulate) #Call Python from R
+library(tensorflow) #Neural Network Backend for Keras
+library(plyr) #Data manipulation
+library(dplyr) # Data Manipulation
+library(caret) #Machine Learning Tools for Training and Validation
+```
+
+### Importing the Data
+This data was taken from the St. Louis branch of the federal reserve, on [this website](https://research.stlouisfed.org/econ/mccracken/fred-databases/).
+
+```{r}
+#Series of 729 observations of 129 macroeconomic indicators
+url <- "https://files.stlouisfed.org/files/htdocs/fred-md/monthly/current.csv"
+currentMD<-read.csv(url)
+#Drop data column, so result contains only data
+fmd<-select(currentMD,-one_of("sasdate"))
+```
+
+```{r}
+#Convert to matrix (needed for replace_na, and later, for Keras)
+mseries<-as.matrix(fmd)
+
+#Extract indicators of missingness
+maug<-1*data.frame(is.na(mseries)) #Multiplying by 1 converts logical to numeric
+
+#Replace missing values with 0s, still needed because model can't handle NAs 
+mseries<-data.frame(replace_na(mseries,0))
+
+#Make feature matrix containing original features and missingness indicators for each feature
+#Convert to arrays because Keras needs that
+augseries<-as.matrix(bind_cols(mseries,maug))
+```
+```{r}
+head(augseries)
+```
+
