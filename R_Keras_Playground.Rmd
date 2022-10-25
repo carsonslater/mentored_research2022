@@ -21,6 +21,7 @@ I created this .Rmd file to play around with `Keras`, because every time I tried
 ```{r}
 library(tidyverse)
 library(keras)
+library(knitr)
 library(foreign) #Read files in Stata .dta format
 library(reticulate) #Call Python from R
 library(tensorflow) #Neural Network Backend for Keras
@@ -56,5 +57,123 @@ augseries<-as.matrix(bind_cols(mseries,maug))
 ```
 ```{r}
 head(augseries)
+```
+
+```{r}
+train_data<-augseries[1:521,]
+mean <- apply(train_data, 2, mean)
+std <- apply(train_data, 2, sd)
+std<-case_when(std==0 ~ 1,
+         std !=0 ~ std) #If data series is constant, recode standard deviation to 1, to avoid dividing by 0
+data <- scale(augseries, center = mean, scale = std)
+
+# Exactly copied generator function from Chollet and Allaire (p.195), 
+# but setting 1 month steps and smaller batches for smaller data
+# Also, allow which column of data is the one to be predicted to be an input
+generator <- function(data, lookback, delay, min_index, max_index,
+                      shuffle = FALSE, batch_size = 20, step = 1, predseries) {
+  if (is.null(max_index)) max_index <- nrow(data) - delay - 1
+  i <- min_index + lookback
+  function() {
+    if (shuffle) {
+      rows <- sample(c((min_index+lookback):max_index), size = batch_size)
+    } else {
+      if (i + batch_size >= max_index)
+        i <<- min_index + lookback
+      rows <- c(i:min(i+batch_size, max_index))
+      i <<- i + length(rows)
+}
+    samples <- array(0, dim = c(length(rows),
+                                lookback / step,
+                                dim(data)[[-1]]))
+    targets <- array(0, dim = c(length(rows)))
+    for (j in 1:length(rows)) {
+      indices <- seq(rows[[j]] - lookback, rows[[j]],
+                     length.out = dim(samples)[[2]])
+      samples[j,,] <- data[indices,]
+      targets[[j]] <- data[rows[[j]] + delay,predseries]
+    }
+    list(samples, targets)
+  }
+}
+```
+
+```{r}
+head(data) %>% kable()
+```
+
+```{r}
+lookback<- 48 #4 years of past data used in each current prediction
+step <- 1 #Do not skip observations (could set to higher value if you had extremely high frquency data, like for stock market data)
+delay<- 1 #Predict 1 month ahead
+batch_size <- 10 #draw 20 samples at a time
+predser <- 6 #Target is the 6th series in the list, Industrial Production
+
+#Training set looks at first 521 months
+train_gen <- generator(
+  data,
+  lookback = lookback,
+  delay = delay,
+  min_index = 1,
+  max_index = 521,
+  shuffle = TRUE,
+  step = step,
+  batch_size = batch_size,
+  predseries = predser  
+)
+#Validation set looks at next 119 months
+val_gen = generator(
+  data,
+  lookback = lookback,
+  delay = delay,
+  min_index = 522,
+  max_index = 640,
+  step = step,
+  batch_size = batch_size,
+  predseries = predser  
+)
+#Test set looks at remaining months (641-729)
+test_gen <- generator(
+  data,
+  lookback = lookback,
+  delay = delay,
+  min_index = 641,
+  max_index = NULL,
+  step = step,
+  batch_size = batch_size,
+  predseries = predser    
+)
+
+val_steps <- (640 - 521 - lookback) / batch_size
+test_steps <- (nrow(data) - 641 - lookback) / batch_size
+```
+
+```{r}
+set.seed(78910)
+```
+
+I cannot seem to get past this chunk, as each time I run it, the R session aborts.
+
+```{r, eval=FALSE}
+densemodel <- keras_model_sequential() %>%
+    layer_flatten(input_shape=c(lookback/step,dim(data)[-1])) %>%
+    layer_dense(units=32,activation="relu") %>%
+    layer_dense(units=1)
+
+
+densemodel %>% compile(
+    optimizer = "rmsprop",
+    loss="mse"
+)
+
+history <- densemodel %>% fit_generator(
+  train_gen,
+  steps_per_epoch = 47,
+  epochs = 20,
+  validation_data = val_gen,
+  validation_steps = val_steps
+)
+
+densemodel %>% save_model_hdf5("densetimeseries.h5")
 ```
 
