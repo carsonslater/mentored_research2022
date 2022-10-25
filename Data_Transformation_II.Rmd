@@ -22,7 +22,6 @@ library(glmnet)
 library(lubridate)
 library(knitr)
 library(mosaic)
-library(doParallel)
 ```
 ```{r, eval=FALSE}
 # Insert pathname below to load any data
@@ -165,4 +164,68 @@ load("Data_Iteration2.Rdata")
 Detect out liars by computing the 90-10 interval. Any outside of that can be ignored.
 
 *I need to revisit this idea and make modifications*
+
+We want to refine the SKU's that are worth forecasting.
+
+```{r}
+# filtering SKU's by arbtrary statistical thresholds
+good_skus <- by_day_stats %>% filter(variance > 0, 
+                                     range > 20, 
+                                     med_qty > 3)
+
+
+df_filter1 <- df %>% filter(df$sku_id %in% good_skus$sku_id)
+```
+
+### EDA
+
+```{r, include=FALSE}
+# For visualization purposes
+library(RColorBrewer)
+n <- 50
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, 
+                           rownames(qual_col_pals)))
+
+# The color schema I am using
+pie(rep(1,n), col=sample(col_vector, n))
+```
+
+#### Volume of Goods Sold Each Year Month
+```{r}
+df_filter1 %>% 
+  filter(placed_at >= max(df_filter1$placed_at) - months(12)) %>% 
+  ggplot(aes(x = month, y= qty, fill = top_cat_id)) +
+  geom_col() + 
+  ylim(0,150000) + 
+  labs(title = "Total Volume of FMCG Units Sold Each Month",
+       x = "Month",
+       y = "Volume",
+       fill = "Category of Good",
+       caption = "** Categories are obfuscated for privacy concerns **") +
+  theme_minimal() +
+  theme(plot.caption.position = "plot",
+        plot.caption = element_text(hjust = 0)) +
+  scale_fill_manual(values = col_vector)
+```
+
+Taking a look at the plot, this is very peculiar for me, what happens if we filter `top_cat_id` 27?
+
+```{r}
+df_filter1 %>% filter(top_cat_id != 27) %>% 
+  filter(placed_at >= max(df_filter1$placed_at) - months(12)) %>% 
+  ggplot(aes(x = month, y= qty, fill = top_cat_id)) +
+  geom_col() + 
+  ylim(0,150000) + 
+  labs(title = "Total Volume of FMCG Units Sold Each Month",
+       x = "Month",
+       y = "Volume",
+       fill = "Category of Good",
+       caption = "** Categories are obfuscated for privacy concerns **") +
+  theme_minimal() +
+  theme(plot.caption.position = "plot",
+        plot.caption = element_text(hjust = 0)) +
+  scale_fill_manual(values = col_vector)
+```
 
