@@ -13,16 +13,61 @@ knitr::opts_chunk$set(
 )
 ```
 
-```{r, eval=FALSE}
+```{r, include=TRUE}
+# Loading packages
+library(tidymodels)
+library(tinytex)
+library(stringr)
+library(janitor)
+library(glmnet)
+library(lubridate)
+library(knitr)
+library(mosaic)
+library(prophet)
+```
+
+```{r, eval=TRUE}
 load("Data_Iteration2.Rdata")
 ```
 
 # The Big Idea for this .Rmd
 
-In my project, I have
+In my project, I have a forecasting model workflow with `Prophet`. The goal of this `.Rmd` is to create benchmark models and see how much better we can get Prophet to perform.
+
+# Prepping the Data for the Modeling Process
+```{r}
+split <- by_day_filter %>% 
+  rename(ds = placed_at, y = qty) %>% 
+  group_by(sku_id) %>% 
+  group_split()
+```
+
+
+I found that SKU's #757 (`split[[253}}`), #983 (`split[[293]]`), #1487 (`split[[356]]`), have either 338 or 339 observations, so these SKU's will be good to compare the time series modeling process on.
 
 ```{r}
-mod <- prophet(df, yearly.seasonality = TRUE, fit = FALSE, interval.width = 0.7) %>% 
+# Building a Benchmark `Prophet` Model
+# Preprocessing
+df <-  split[[253]] 
+
+# Creating an evaluation data frame
+eval <- df %>% 
+  filter(ds >= max(df$ds) - weeks(8)) %>% 
+  complete(ds = seq.Date(min(ds), max(ds), by="day")) %>% 
+  mutate(y = ifelse(is.na(y), 0, y))
+  
+eval <- eval %>% slice(1:(n() - 1))
+
+orig_df <- df
+
+df <- df %>% filter(ds < max(df$ds) - weeks(8))
+```
+
+```{r}
+mod <- prophet(df, 
+               yearly.seasonality = TRUE, 
+               fit = FALSE, 
+               interval.width = 0.7) %>% 
   add_country_holidays(country_name = 'ID')
 
 fit <- fit.prophet(mod, df)
@@ -34,7 +79,7 @@ future <- make_future_dataframe(fit, periods = 8*7)
 fcst <- predict(fit, future)
 
 ##########################################################
-# Since we cannot have negaitve predictive quantities, 
+# Since we cannot have negative predictive quantities, 
 # I invert the upper confidence interval and set the 
 # negative yhats to zero
 ##########################################################
@@ -49,45 +94,10 @@ fcst <- fcst %>%
 # Final plot of forecast
 plot(fit, fcst) + 
   add_changepoints_to_plot(m = fit, cp_color = "orange") +
-  ylim(0, 1750) +
   labs(title = "Fitted Model and Forecast of an SKU",
        x = "Date",
        y = "Volume Purchased") +
   theme_minimal()
 ```
 
-```{r}
-# Model Evaluation
-pred <- fcst %>% filter(ds >= max(orig_df$ds) - weeks(8)) %>% 
-  select(ds, yhat_lower, yhat, yhat_upper)
-
-err_df <- tibble(pred$ds, eval$y, pred$yhat)
-
-colnames(err_df) <- c("ds", "y", "yhat")
-
-err_df <- err_df %>% mutate(resid = y - yhat)
-
-#library(Metrics)
-# Get RMSE
-Metrics::rmse(err_df$y, err_df$yhat)
-
-# Get SMAPE
-Metrics::smape(err_df$y, err_df$yhat) # can be infinity if predicted\
-# values in denominator are close to 1
-
-err_df %>% 
-  ggplot(aes(x = resid)) +
-  geom_histogram(binwidth = 50, 
-                 fill = "orange", 
-                 color = "grey") +
-  #xlim(-650,100) +
-  labs(title = "Residual Plot",
-       x = "Residual Value",
-       y = "Frequency",
-       caption = "SKU #200") +
-  theme_minimal()
-```
-```{r}
-
-```
 
