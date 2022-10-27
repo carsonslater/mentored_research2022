@@ -43,12 +43,52 @@ split <- by_day_filter %>%
 ```
 
 
-I found that SKU's #757 (`split[[253}}`), #983 (`split[[293]]`), #1487 (`split[[356]]`), have either 338 or 339 observations, so these SKU's will be good to compare the time series modeling process on.
+I found that SKU's #757 (`split[[253]]`), #983 (`split[[293]]`), #1487 (`split[[356]]`), have either 338 or 339 observations, so these SKU's will be good to compare the time series modeling process on.
+
+# Visualization for SKU's
+
+We want to get a glimpse of what we are looking at. Hence, we know that we need to visualize the data for each of these goods.
 
 ```{r}
+# 757
+by_day_filter %>% 
+  filter(sku_id == 757) %>% 
+  ggplot(aes(x = placed_at, y = qty)) +
+  geom_point() +
+  geom_smooth() +
+  labs(x = "Date",
+       y = "Volume Purchased") +
+  theme_minimal()
+
+# 983
+by_day_filter %>% 
+  filter(sku_id == 983) %>% 
+  ggplot(aes(x = placed_at, y = qty)) +
+  geom_point() +
+  geom_smooth() +
+  labs(x = "Date",
+       y = "Volume Purchased") +
+  theme_minimal()
+
+# 1488
+by_day_filter %>% 
+  filter(sku_id == 1488) %>% 
+  ggplot(aes(x = placed_at, y = qty)) +
+  geom_point() +
+  geom_smooth() +
+  labs(x = "Date",
+       y = "Volume Purchased") +
+  theme_minimal()
+```
+
+`sku_id` 757 appears to be a good where most of the time, the total volume distributed per day is below 10. This means it might not be the most urgent good to forecase. The other two, `sku_id` 983 and 1488 appear to be more seasonal and unpredictable with trend changes.
+
 # Building a Benchmark `Prophet` Model
+```{r}
+# This is going to be a model for SKU_id 1488.
+
 # Preprocessing
-df <-  split[[253]] 
+df <-  split[[293]] 
 
 # Creating an evaluation data frame
 eval <- df %>% 
@@ -67,7 +107,7 @@ df <- df %>% filter(ds < max(df$ds) - weeks(8))
 mod <- prophet(df, 
                yearly.seasonality = TRUE, 
                fit = FALSE, 
-               interval.width = 0.7) %>% 
+               interval.width = 0.8) %>% 
   add_country_holidays(country_name = 'ID')
 
 fit <- fit.prophet(mod, df)
@@ -100,4 +140,60 @@ plot(fit, fcst) +
   theme_minimal()
 ```
 
+```{r}
+# Model Evaluation
+pred <- fcst %>% filter(ds >= max(orig_df$ds) - weeks(8)) %>% 
+  select(ds, yhat_lower, yhat, yhat_upper)
+
+# Make a tibble of errors from the days
+err_df <- tibble(pred$ds, eval$y, pred$yhat)
+
+colnames(err_df) <- c("ds", "y", "yhat")
+
+# creating a residual column
+err_df <- err_df %>% mutate(resid = y - yhat)
+
+# We need to filter zeros for the err_df so that we can find MAPE
+# If the observed value is zero, MAPE is infinity.
+err_df <- err_df %>% filter(y != 0)
+
+#library(Metrics)
+
+# Get RMSE
+Metrics::rmse(err_df$y, err_df$yhat)
+
+# RMSE = 11.8242
+
+# Get SMAPE
+Metrics::smape(err_df$y, err_df$yhat) # can be infinity if predicted values in denominator are close to 1
+
+# SMAPE = .4353
+
+# A MAPE function
+mean(abs((err_df$y-err_df$yhat)/err_df$y))
+
+# MAPE = .4366 - not super good.
+
+err_df %>% 
+  ggplot(aes(x = resid)) +
+  geom_histogram(binwidth = 5, 
+                 fill = "orange", 
+                 color = "grey") +
+  labs(title = "Residual Plot",
+       x = "Residual Value",
+       y = "Frequency",
+       caption = "SKU #200") +
+  theme_minimal()
+```
+
+### Attempting to Use Cross-Validation (Again with `Prophet`)
+
+```{r}
+# This is also going to be a model for sku_id 1488.
+mod2 <- prophet(df, 
+               yearly.seasonality = TRUE, 
+               fit = FALSE, 
+               interval.width = 0.8) %>% 
+  add_country_holidays(country_name = 'ID')
+```
 
