@@ -13,6 +13,10 @@ knitr::opts_chunk$set(
 )
 ```
 
+### INTRO
+Clicking "Run All" should give you all the things in your environment you need to be able to enter `save.image("Data_Iteration2.Rdata")`. Then you will have a `.Rdata` file in order that you can use any other iteration II .Rmd file.
+
+
 ```{r, include=FALSE}
 # Loading packages
 library(tidymodels)
@@ -23,7 +27,7 @@ library(lubridate)
 library(knitr)
 library(mosaic)
 ```
-```{r, eval=FALSE}
+```{r, eval=TRUE}
 # Insert pathname below to load any data
 path <- "/Users/carson/Documents/Wheaton Senior Year/Fall 2022/Mentored Research/new_baskets_adhie.csv"
 
@@ -32,7 +36,7 @@ df <- read.csv(path)
 
 # Data Transformation Steps for the `Prophet` Modeling Process
 ### Preparing the Data with Robust Code (For Awantunai Data)
-```{r, eval=FALSE}
+```{r, eval=TRUE}
 # Finding Percentage of the Missing Data for each column.
 colMeans(is.na(df))*100
 # There is a very small proportion of missing data in these data 
@@ -89,7 +93,7 @@ df <- df %>% distinct(order_id, placed_at, merchant_id, sku_id, .keep_all = TRUE
 ### Exploratory Data Analysis
 From my first iteration I learned that there is no 'one size fits all' forecasting model. I want to see if I can create a data frame that will contain all of the summary statistics for each SKU in a data set, containing range, mean order volume, median order volume, etc. 
 
-```{r, eval=FALSE}
+```{r, eval=TRUE}
 # Creating a data frame with the summary statistics for each SKU
 sku_cnt <- df %>% count(sku_id) %>% filter(n >= 20)
   
@@ -154,7 +158,7 @@ by_day_stats <- by_day %>%
 
 *(10/26/2022) Below is the correct code for aggregating quantity per day for each SKU.*
 
-```{r}
+```{r, eval=TRUE}
 by_day2 <- df %>% select(placed_at, 
                          sku_id,
                          qty) %>% 
@@ -178,6 +182,19 @@ by_day_stats2 <- by_day2 %>%
   arrange(desc(tot_vol))
 ```
 
+```{r, eval=TRUE}
+# filtering SKU's by arbtrary statistical thresholds
+good_skus <- by_day_stats2 %>% filter(variance > 0, 
+                                     range > 20, 
+                                     med_qty > 3)
+
+skus_vec <- as.vector(good_skus$sku_id)
+
+by_day_filter <- by_day2 %>% 
+  group_by(sku_id) %>% 
+  filter(sku_id %in% skus_vec)
+```
+
 ```{r, eval=FALSE}
 load("Data_Iteration2.Rdata")
 ```
@@ -189,17 +206,10 @@ Detect out liars by computing the 90-10 interval. Any outside of that can be ign
 
 We want to refine the SKU's that are worth forecasting.
 
+### Checking the Viability of My Filtered Data
 ```{r}
-# filtering SKU's by arbtrary statistical thresholds
-good_skus <- by_day_stats2 %>% filter(variance > 0, 
-                                     range > 20, 
-                                     med_qty > 3)
-
-skus_vec <- as.vector(good_skus$sku_id)
-
-by_day_filter <- by_day2 %>% 
-  group_by(sku_id) %>% 
-  filter(sku_id %in% skus_vec)
+# This code chunk is simply to see if my prior code worked!
+test <- by_day2 %>% filter(sku_id == 1209)
 ```
 
 ```{r, eval=FALSE}
@@ -221,18 +231,19 @@ col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors,
 pie(rep(1,n), col=sample(col_vector, n))
 ```
 
-#### Volume of Goods Sold Each Year Month
+#### Plotting for EDA
+
+*These are a couple of plots I replicated from Iteration 1. I have not paid too close attention to whether they work or not because of the bugs I had with my code above.*
+
 ```{r}
-df_filter1 %>% 
-  filter(placed_at >= max(df_filter1$placed_at) - months(12)) %>% 
-  ggplot(aes(x = month, y= qty, fill = top_cat_id)) +
+by_day2 %>% 
+  filter(placed_at >= max(by_day2$placed_at) - months(12)) %>% 
+  ggplot(aes(x = placed_at, y= qty)) +
   geom_col() + 
-  ylim(0,150000) + 
   labs(title = "Total Volume of FMCG Units Sold Each Month",
        x = "Month",
        y = "Volume",
-       fill = "Category of Good",
-       caption = "** Categories are obfuscated for privacy concerns **") +
+       fill = "Category of Good") +
   theme_minimal() +
   theme(plot.caption.position = "plot",
         plot.caption = element_text(hjust = 0)) +
@@ -241,12 +252,11 @@ df_filter1 %>%
 
 Taking a look at the plot, this is very peculiar for me, what happens if we filter `top_cat_id` 27?
 
-```{r}
-df_filter1 %>% filter(top_cat_id != 27) %>% 
-  filter(placed_at >= max(df_filter1$placed_at) - months(12)) %>% 
-  ggplot(aes(x = month, y= qty, fill = top_cat_id)) +
-  geom_col() + 
-  ylim(0,150000) + 
+```{r, eval=FALSE}
+by_day2 %>%
+  filter(placed_at >= max(by_day2$placed_at) - months(12)) %>% 
+  ggplot(aes(x = month, y= qty)) +
+  geom_col() +
   labs(title = "Total Volume of FMCG Units Sold Each Month",
        x = "Month",
        y = "Volume",
@@ -258,8 +268,3 @@ df_filter1 %>% filter(top_cat_id != 27) %>%
   scale_fill_manual(values = col_vector)
 ```
 
-### Checking the Viability of My Filtered Data
-```{r}
-# This code chunk is simply to see if my prior code worked!
-test <- by_day2 %>% filter(sku_id == 1209)
-```
