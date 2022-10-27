@@ -1,0 +1,93 @@
+---
+title: "Model Comparison"
+author: "Carson Slater"
+date: '2022-10-26'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+```{r, eval=FALSE}
+load("Data_Iteration2.Rdata")
+```
+
+# The Big Idea for this .Rmd
+
+In my project, I have
+
+```{r}
+mod <- prophet(df, yearly.seasonality = TRUE, fit = FALSE, interval.width = 0.7) %>% 
+  add_country_holidays(country_name = 'ID')
+
+fit <- fit.prophet(mod, df)
+
+# 6 Months
+future <- make_future_dataframe(fit, periods = 8*7)
+
+# Make a forecast
+fcst <- predict(fit, future)
+
+##########################################################
+# Since we cannot have negaitve predictive quantities, 
+# I invert the upper confidence interval and set the 
+# negative yhats to zero
+##########################################################
+
+fcst <- fcst %>% mutate(diff = yhat_upper - yhat)
+
+fcst <- fcst %>%
+  mutate(yhat_upper = ifelse(yhat_upper >= 0, yhat_upper, diff)) %>% 
+  mutate(yhat = ifelse(yhat >= 0, yhat, 0), 
+         yhat_lower = ifelse(yhat_lower >= 0, yhat_lower, 0))
+
+# Final plot of forecast
+plot(fit, fcst) + 
+  add_changepoints_to_plot(m = fit, cp_color = "orange") +
+  ylim(0, 1750) +
+  labs(title = "Fitted Model and Forecast of an SKU",
+       x = "Date",
+       y = "Volume Purchased") +
+  theme_minimal()
+```
+
+```{r}
+# Model Evaluation
+pred <- fcst %>% filter(ds >= max(orig_df$ds) - weeks(8)) %>% 
+  select(ds, yhat_lower, yhat, yhat_upper)
+
+err_df <- tibble(pred$ds, eval$y, pred$yhat)
+
+colnames(err_df) <- c("ds", "y", "yhat")
+
+err_df <- err_df %>% mutate(resid = y - yhat)
+
+#library(Metrics)
+# Get RMSE
+Metrics::rmse(err_df$y, err_df$yhat)
+
+# Get SMAPE
+Metrics::smape(err_df$y, err_df$yhat) # can be infinity if predicted\
+# values in denominator are close to 1
+
+err_df %>% 
+  ggplot(aes(x = resid)) +
+  geom_histogram(binwidth = 50, 
+                 fill = "orange", 
+                 color = "grey") +
+  #xlim(-650,100) +
+  labs(title = "Residual Plot",
+       x = "Residual Value",
+       y = "Frequency",
+       caption = "SKU #200") +
+  theme_minimal()
+```
+```{r}
+
+```
+

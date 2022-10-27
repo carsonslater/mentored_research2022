@@ -127,35 +127,57 @@ sum_stats %>% filter(sku_id == 976)
 sum_stats %>% arrange(desc(med_qty), desc(variance))
 ```
 
-I need to transform the data and aggregate by day each order volume.
+I need to transform the data and aggregate by day each `sku_id` order volume. *As of 10-26-2022, I believe the code below is incorrect.*
 
 ```{r, eval=FALSE}
-by_day <- df %>% select(placed_at, qty, sku_id) %>% 
-  rename(ds = placed_at, y = qty) %>%
-  mutate(ds = as.Date(ds)) %>% 
-  group_by(ds, sku_id) %>% 
-  mutate(y = sum(y)) %>% 
+by_day <- df %>%
+  mutate(placed_at = as.Date(placed_at)) %>% 
+  group_by(placed_at, sku_id) %>% 
+  mutate(qty = sum(qty)) %>% 
   unique()
 
 by_day_stats <- by_day %>% 
   mutate(n = count(sku_id)) %>% 
   group_by(sku_id) %>%
-  summarize(tot_vol = sum(y),
-            avg_qty = mean(y),
-            variance = var(y),
-            quartile1 = quantile(y, 0.25),
-            quartile3 = quantile(y, 0.75),
-            med_qty = median(y),
-            min = min(y), 
-            max = max(y),
+  summarize(tot_vol = sum(qty),
+            avg_qty = mean(qty),
+            variance = var(qty),
+            quartile1 = quantile(qty, 0.25),
+            quartile3 = quantile(qty, 0.75),
+            med_qty = median(qty),
+            min = min(qty), 
+            max = max(qty),
             range = max - min) %>% 
   distinct %>% 
   arrange(desc(tot_vol))
 ```
 
-```{r, eval=FALSE}
-save.image("Data_Iteration2.Rdata")
+*(10/26/2022) Below is the correct code for aggregating quantity per day for each SKU.*
+
+```{r}
+by_day2 <- df %>% select(placed_at, 
+                         sku_id,
+                         qty) %>% 
+  mutate(placed_at = as.Date(placed_at)) %>% 
+  group_by(placed_at, sku_id) %>% 
+  summarize(qty = sum(qty))
+
+by_day_stats2 <- by_day2 %>% 
+  mutate(n = count(sku_id)) %>% 
+  group_by(sku_id) %>%
+  summarize(tot_vol = sum(qty),
+            avg_qty = mean(qty),
+            variance = var(qty),
+            quartile1 = quantile(qty, 0.25),
+            quartile3 = quantile(qty, 0.75),
+            med_qty = median(qty),
+            min = min(qty), 
+            max = max(qty),
+            range = max - min) %>% 
+  distinct %>% 
+  arrange(desc(tot_vol))
 ```
+
 ```{r, eval=FALSE}
 load("Data_Iteration2.Rdata")
 ```
@@ -169,12 +191,19 @@ We want to refine the SKU's that are worth forecasting.
 
 ```{r}
 # filtering SKU's by arbtrary statistical thresholds
-good_skus <- by_day_stats %>% filter(variance > 0, 
+good_skus <- by_day_stats2 %>% filter(variance > 0, 
                                      range > 20, 
                                      med_qty > 3)
 
+skus_vec <- as.vector(good_skus$sku_id)
 
-df_filter1 <- df %>% filter(df$sku_id %in% good_skus$sku_id)
+by_day_filter <- by_day2 %>% 
+  group_by(sku_id) %>% 
+  filter(sku_id %in% skus_vec)
+```
+
+```{r, eval=FALSE}
+save.image("Data_Iteration2.Rdata")
 ```
 
 ### EDA
@@ -229,3 +258,8 @@ df_filter1 %>% filter(top_cat_id != 27) %>%
   scale_fill_manual(values = col_vector)
 ```
 
+### Checking the Viability of My Filtered Data
+```{r}
+# This code chunk is simply to see if my prior code worked!
+test <- by_day2 %>% filter(sku_id == 1209)
+```
