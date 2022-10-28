@@ -425,6 +425,7 @@ make_model <- function(mod, df) {
 
 ### Testing Model-Building Function
 ```{r}
+# This function does not work...
 make_model(mod = mod2, df = df)
 ```
 
