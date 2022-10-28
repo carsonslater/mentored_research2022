@@ -13,7 +13,7 @@ knitr::opts_chunk$set(
 )
 ```
 
-```{r, include=TRUE}
+```{r, include=FALSE}
 # Loading packages
 library(tidymodels)
 library(tinytex)
@@ -323,3 +323,109 @@ err_df2 %>%
 ```
 
 After reviewing the model evaluation metrics, this model was slightly better than the prior one. I need to keep tuning parameters to get the model to have the least amount of error.
+
+In this I added changepoints into the model, so that it can know that the trend is switching. AS a result the model performed slightly better.
+
+### Writing a Function to Build a Model and Calculate Metrics
+```{r}
+# See plot for SKU #983 to see how I selected changepoints
+mod2 <- prophet(growth = "linear",
+                changepoints = c("2022-03-11", "2022-06-08"),
+                yearly.seasonality = FALSE,
+                daily.seasonality = FALSE,
+                seasonality.prior.scale = 10,
+                holiday.prior.scale = 10,
+                changepoint.prior.scale = 10,
+                mcmc.samples = 0,
+                interval.width = 0.8,
+                uncertainty.samples = 1000,
+                fit = FALSE
+                )
+make_model <- function(mod, df) {
+  # Creating an evaluation data frame
+  eval <- df %>% 
+    filter(ds >= max(df$ds) - weeks(8)) %>% 
+    complete(ds = seq.Date(min(ds), max(ds), by="day")) %>% 
+    mutate(y = ifelse(is.na(y), 0, y))
+  
+  eval <- eval %>% slice(1:(n() - 1))
+
+  orig_df <- df
+
+  df <- df %>% filter(ds < max(df$ds) - weeks(8))
+  
+  # Fitting the Model
+  fit <- fit.prophet(mod, df)
+  
+  # 2 Months
+  future <- make_future_dataframe(fit, periods = 8*7)
+  
+  # Make a forecast
+  fcst <- predict(fit, future)
+  
+  fcst <- fcst %>% mutate(diff = yhat_upper - yhat)
+  
+  fcst <- fcst %>%
+  mutate(yhat_upper = ifelse(yhat_upper >= 0, yhat_upper, diff)) %>% 
+  mutate(yhat = ifelse(yhat >= 0, yhat, 0), 
+         yhat_lower = ifelse(yhat_lower >= 0, yhat_lower, 0))
+  
+  prophet_plot_components(fit, fcst)
+  
+  # Final plot of forecast
+  plot(fit2, fcst2) + 
+  add_changepoints_to_plot(m = fit, cp_color = "orange") +
+  labs(title = "Fitted Model and Forecast of an SKU",
+       x = "Date",
+       y = "Volume Purchased") +
+  theme_minimal()
+  
+  # Model Evaluation
+  pred <- fcst %>% filter(ds >= max(orig_df$ds) - weeks(8)) %>%
+    select(ds, yhat_lower, yhat, yhat_upper)
+  
+  # Make a tibble of errors from the days
+  err_df <- tibble(pred$ds, eval$y, pred$yhat)
+  
+  colnames(err_df) <- c("ds", "y", "yhat")
+  
+  # creating a residual column
+  err_df <- err_df %>% mutate(resid = eval$y - yhat)
+  
+  # We need to filter zeros for the err_df so that we can find MAPE
+  # If the observed value is zero, MAPE is infinity.
+  err_df <- err_df %>% filter(y != 0)
+  
+  # Get RMSE
+  print("RMSE:")
+  print(Metrics::rmse(err_df$y, err_df$yhat))
+  print("")
+  
+  # Get SMAPE
+  print("SMAPE:")
+  print(Metrics::smape(err_df$y, err_df$yhat))
+  print("")
+  
+  # Get MAPE
+  print("MAPE:")
+  print(mean(abs((err_df$y-err_df$yhat)/err_df$y)))
+  print("")
+  
+  err_df %>% 
+  ggplot(aes(x = resid)) +
+  geom_histogram(binwidth = 3, 
+                 fill = "orange", 
+                 color = "grey") +
+  labs(title = "Residual Plot",
+       x = "Residual Value",
+       y = "Frequency") +
+  theme_minimal()
+}
+```
+
+### Testing Model-Building Function
+```{r}
+make_model(mod = mod2, df = df)
+```
+
+This function does not handle models with changepoints, and I am not sure why.
