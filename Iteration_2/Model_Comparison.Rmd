@@ -42,6 +42,7 @@ split <- by_day_filter %>%
   group_split()
 ```
 
+# Additionally We Will Scale the Data [0,1]
 
 I found that SKU's #757 (`split[[253]]`), #983 (`split[[293]]`), #1487 (`split[[356]]`), have either 338 or 339 observations, so these SKU's will be good to compare the time series modeling process on.
 
@@ -112,7 +113,7 @@ mod <- prophet(df,
 
 fit <- fit.prophet(mod, df)
 
-# 6 Months
+# 2 Months
 future <- make_future_dataframe(fit, periods = 8*7)
 
 # Make a forecast
@@ -131,6 +132,8 @@ fcst <- fcst %>%
   mutate(yhat = ifelse(yhat >= 0, yhat, 0), 
          yhat_lower = ifelse(yhat_lower >= 0, yhat_lower, 0))
 
+prophet_plot_components(fit, fcst)
+
 # Final plot of forecast
 plot(fit, fcst) + 
   add_changepoints_to_plot(m = fit, cp_color = "orange") +
@@ -142,7 +145,7 @@ plot(fit, fcst) +
 
 ```{r}
 # Model Evaluation
-pred <- fcst %>% filter(ds >= max(orig_df$ds) - weeks(8)) %>% 
+pred <- fcst %>% filter(ds >= max(orig_df$ds) - weeks(8)) %>%
   select(ds, yhat_lower, yhat, yhat_upper)
 
 # Make a tibble of errors from the days
@@ -181,19 +184,142 @@ err_df %>%
                  color = "grey") +
   labs(title = "Residual Plot",
        x = "Residual Value",
-       y = "Frequency",
-       caption = "SKU #200") +
+       y = "Frequency") +
   theme_minimal()
 ```
 
-### Attempting to Use Cross-Validation (Again with `Prophet`)
+### Attempting to Tune Parameters of `Prophet` Model
 
 ```{r}
-# This is also going to be a model for sku_id 1488.
-mod2 <- prophet(df, 
-               yearly.seasonality = TRUE, 
-               fit = FALSE, 
-               interval.width = 0.8) %>% 
-  add_country_holidays(country_name = 'ID')
+# Plotting the original time series
+#install.packages("TSstudio")
+library(TSstudio)
+library(xts)
+
+# Plotting time series in base R plotting
+ts <- xts(df$y, df$ds)
+
+ts.plot(ts)
+
+# What we are trying to predict (with ggplot2):
+df %>% ggplot(aes(x = ds, y = y)) +
+  geom_line() +
+  xlab("") +
+  scale_x_date(date_labels = "%Y %b %d")
 ```
 
+# Testing Fourier Order
+### Yearly Seasonality
+```{r}
+# This code chunk is simply to explore what different parameters in Prophet do.
+# This is also going to be a model for sku_id 1488.
+
+# This is not the actualy time series, but the yearly trend
+test1 <- prophet(df, yearly.seasonality = 3)
+prophet:::plot_yearly(test1)
+
+test2 <- prophet(df, yearly.seasonality = 10)
+prophet:::plot_yearly(test2)
+
+test3 <- prophet(df, yearly.seasonality = 20)
+prophet:::plot_yearly(test3)
+```
+
+### SECOND `Prophet` Model
+
+In this I added changepoints into the model, so that it can know that the trend is switching. AS a result the model performed slightly better.
+
+```{r}
+# See plot for SKU #983 to see how I selected changepoints
+mod2 <- prophet(growth = "linear",
+                changepoints = c("2022-03-11", "2022-06-08"),
+                yearly.seasonality = FALSE,
+                daily.seasonality = FALSE,
+                seasonality.prior.scale = 10,
+                holiday.prior.scale = 10,
+                changepoint.prior.scale = 10,
+                mcmc.samples = 0,
+                interval.width = 0.8,
+                uncertainty.samples = 1000,
+                fit = FALSE
+                )
+
+# Fitting the Model
+fit2 <- fit.prophet(mod2, df)
+
+# 2 Months
+future <- make_future_dataframe(fit2, periods = 8*7)
+
+# Make a forecast
+fcst2 <- predict(fit2, future)
+
+##########################################################
+# Since we cannot have negative predictive quantities, 
+# I invert the upper confidence interval and set the 
+# negative yhats to zero
+##########################################################
+
+fcst2 <- fcst2 %>% mutate(diff = yhat_upper - yhat)
+
+fcst2 <- fcst2 %>%
+  mutate(yhat_upper = ifelse(yhat_upper >= 0, yhat_upper, diff)) %>% 
+  mutate(yhat = ifelse(yhat >= 0, yhat, 0), 
+         yhat_lower = ifelse(yhat_lower >= 0, yhat_lower, 0))
+
+prophet_plot_components(fit2, fcst2)
+
+# Final plot of forecast
+plot(fit2, fcst2) + 
+  add_changepoints_to_plot(m = fit, cp_color = "orange") +
+  labs(title = "Fitted Model and Forecast of an SKU",
+       x = "Date",
+       y = "Volume Purchased") +
+  theme_minimal()
+```
+
+```{r}
+# Model Evaluation
+pred2 <- fcst2 %>% filter(ds >= max(orig_df$ds) - weeks(8)) %>%
+  select(ds, yhat_lower, yhat, yhat_upper)
+
+# Make a tibble of errors from the days
+err_df2 <- tibble(pred2$ds, eval$y, pred2$yhat)
+
+colnames(err_df2) <- c("ds", "y", "yhat")
+
+# creating a residual column
+err_df2 <- err_df2 %>% mutate(resid = y - yhat)
+
+# We need to filter zeros for the err_df so that we can find MAPE
+# If the observed value is zero, MAPE is infinity.
+err_df2 <- err_df2 %>% filter(y != 0)
+
+#library(Metrics)
+
+# Get RMSE
+Metrics::rmse(err_df2$y, err_df2$yhat)
+
+# RMSE = 7.603284
+
+# Get SMAPE
+Metrics::smape(err_df2$y, err_df2$yhat) # can be infinity if predicted values in denominator are close to 1
+
+# SMAPE = .2466916
+
+# A MAPE function
+mean(abs((err_df2$y-err_df2$yhat)/err_df2$y))
+
+# MAPE = .340391
+
+err_df2 %>% 
+  ggplot(aes(x = resid)) +
+  geom_histogram(binwidth = 3, 
+                 fill = "orange", 
+                 color = "grey") +
+  labs(title = "Residual Plot",
+       x = "Residual Value",
+       y = "Frequency") +
+  theme_minimal()
+```
+
+After reviewing the model evaluation metrics, this model was slightly better than the prior one. I need to keep tuning parameters to get the model to have the least amount of error.
