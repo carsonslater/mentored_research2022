@@ -27,6 +27,7 @@ library(prophet)
 ```
 
 ```{r, eval=TRUE}
+# Make sure you have your working directory configured such that it can find these data.
 load("Data_Iteration2.Rdata")
 ```
 
@@ -57,6 +58,7 @@ by_day_filter %>%
   ggplot(aes(x = placed_at, y = qty)) +
   geom_point() +
   geom_smooth() +
+  geom_line(color = "red") +
   labs(x = "Date",
        y = "Volume Purchased") +
   theme_minimal()
@@ -520,7 +522,145 @@ make_model <- function(mod, df) {
 ### Testing Model-Building Function
 ```{r}
 # This function does not work...
+# There appears to be a problem with models that have more complex hyperparameters.
 make_model(mod = mod2, df = df)
 ```
 
 This function does not handle models with changepoints, and I am not sure why.
+
+#Building Additional Models to Compare
+
+In thinking a little bit about the modeling process and the mathematics behind the models I am considering, exponential smoothing might be the best alternative model. This is because the data is a "random walk" dataset.
+
+```{r}
+# Preprocessing
+df <-  split[[293]] 
+
+# Creating an evaluation data frame
+eval <- df %>% 
+  filter(ds >= max(df$ds) - weeks(8)) %>% 
+  complete(ds = seq.Date(min(ds), max(ds), by="day")) %>% 
+  mutate(y = ifelse(is.na(y), 0, y))
+  
+eval <- eval %>% slice(1:(n() - 1))
+
+orig_df <- df
+
+df <- df %>% filter(ds < max(df$ds) - weeks(8))
+```
+
+### Building Exponential Smoothig Models Using the `forecast` Package
+```{r}
+library(forecast)
+library(lubridate)
+library(zoo)
+library(fpp2)
+```
+
+```{r}
+# Finding the date-time conversions for the start day and week
+startW <- as.numeric(strftime(head(df$ds, 1), format = "%W"))
+startD <- as.numeric(strftime(head(df$ds, 1) + 1, format =" %w"))
+
+# Checking to see if the time series will work with the date transformation
+print(ts(data = df$y, frequency = 7, start = c(startW, startD)), calendar = T)
+```
+
+```{r}
+# Making a time series object
+y <- ts(data = df$y, frequency = 7, start = c(startW, startD))
+
+autoplot(y) + ggtitle("Time Plot: Quantity of SKU per Week") + ylab("Total of SKU Sold")
+
+# Stationary transform the data
+y2 <- diff(y)
+
+# Viewing the transformed data: change in real data over time
+autoplot(y2)
+```
+
+```{r}
+fit_ets <- ets(y)
+
+print(summary(fit_ets))
+
+autoplot(fit_ets)
+
+checkresiduals(fit_ets)
+```
+
+### Trying Again Using the `fpp2` Package
+
+I think that I found a nice [article](https://www.geeksforgeeks.org/exponential-smoothing-in-r-programming/?utm_source=pocket_mylist) that explains how to do this with `tidymodels` and `fpp2`. So I am going ot give this a try with simple exponential smoothing (SES).
+
+```{r}
+# create training and testing set of the SKU data
+startW.train <- as.numeric(strftime(head(df$ds, 1), format = "%W"))
+startD.train <- as.numeric(strftime(head(df$ds, 1) + 1, format =" %w"))
+
+startW.test <- as.numeric(strftime(head(eval$ds, 1), format = "%W"))
+startD.test <- as.numeric(strftime(head(eval$ds, 1), format = "%W"))
+
+# Create training and testing windows
+
+# Training data (creates `ts` object)
+sku.train <- ts(data = df$y, frequency = 7, start = c(startW.train, startD.train))
+
+# Testing data
+sku.test <- ts(data = eval$y, frequency = 7, start = c(startW.test, startD.test))
+```
+
+So apparently the `accuracy` function requires a `ts` object such that the `sku.train` and `sku.test` objects are in the 
+
+#### SES With the Trend
+```{r}
+# Making the SES model
+ses.sku <- ses(sku.train,
+                alpha = .2,
+                h = 100)
+autoplot(ses.sku) # this was with the trend
+```
+
+#### SES Without the Trend
+```{r}
+sku.dif <- diff(sku.train)
+autoplot(sku.dif)
+ 
+# reapplying SES on the filtered data
+ses.sku.dif <- ses(sku.dif,
+                    alpha = .2,
+                    h = 100)
+autoplot(ses.sku.dif)
+```
+
+#### Computing Evaluation Metrics
+```{r, eval=FALSE}
+# removing trend from test set
+sku.dif.test <- diff(sku.test)
+accuracy(ses.sku.dif, sku.dif.test)
+ 
+# comparing our model with other alphas
+alpha <- seq(.01, .99, by = .01)
+RMSE <- NA
+for(i in seq_along(alpha)) {
+  fit <- ses(sku.dif, alpha = alpha[i],
+             h = 100)
+  RMSE[i] <- accuracy(fit,
+                      sku.dif.test)[2,2] # selecting RMSE from the object
+}
+ 
+# convert to a data frame and
+# identify min alpha value
+alpha.fit <- data_frame(alpha, RMSE)
+alpha.min <- filter(alpha.fit,
+                    RMSE == min(RMSE))
+ 
+# plot RMSE vs. alpha
+ggplot(alpha.fit, aes(alpha, RMSE)) +
+  geom_line() +
+  geom_point(data = alpha.min,
+             aes(alpha, RMSE),
+             size = 2, color = "red")
+```
+
+Well, all of the code above have the 
