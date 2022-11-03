@@ -692,17 +692,17 @@ I have compiled metrics for one time series and can easily build two more on oth
 # Get RMSE
 Metrics::rmse(err_df3$y, err_df3$yhat)
 
-# RMSE = 7.603284
+# RMSE = 7.140123
 
 # Get SMAPE
 Metrics::smape(err_df3$y, err_df3$yhat) # can be infinity if predicted values in denominator are close to 1
 
-# SMAPE = .2466916
+# SMAPE = 0.2509529
 
 # A MAPE function
 mean(abs((err_df3$y-err_df3$yhat)/err_df3$y))
 
-# MAPE = .340391
+# MAPE = 0.2800538
 
 err_df3 %>% 
   ggplot(aes(x = resid)) +
@@ -716,6 +716,8 @@ err_df3 %>%
 
 ```
 
+The residuals look normally distributed, which means that the model does not appear to be overfitting, nor does it appear to be leaving some information out.
+
 #### An ETS model
 ```{r}
 print(summary(fit_ets))
@@ -725,3 +727,4 @@ autoplot(fit_ets)
 checkresiduals(fit_ets)
 ```
 
+Again, the residuals look normally distributed, which means that the model does not appear to be overfitting, nor does it appear to be leaving some information out. The only issue is that the RMSE slightly larger.
