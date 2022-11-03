@@ -58,7 +58,7 @@ by_day_filter %>%
   ggplot(aes(x = placed_at, y = qty)) +
   geom_point() +
   geom_smooth() +
-  geom_line(color = "red") +
+  geom_line(color = "red", alpha = 0.2) +
   labs(x = "Date",
        y = "Volume Purchased") +
   theme_minimal()
@@ -69,6 +69,7 @@ by_day_filter %>%
   ggplot(aes(x = placed_at, y = qty)) +
   geom_point() +
   geom_smooth() +
+  geom_line(color = "red", alpha = 0.2) +
   labs(x = "Date",
        y = "Volume Purchased") +
   theme_minimal()
@@ -79,6 +80,7 @@ by_day_filter %>%
   ggplot(aes(x = placed_at, y = qty)) +
   geom_point() +
   geom_smooth() +
+  geom_line(color = "red", alpha = 0.2) +
   labs(x = "Date",
        y = "Volume Purchased") +
   theme_minimal()
@@ -192,7 +194,8 @@ err_df %>%
 
 ### Attempting to Tune Parameters of `Prophet` Model
 
-```{r}
+Please ignore the following code chunk.
+```{r, eval =FALSE}
 # Plotting the original time series
 #install.packages("TSstudio")
 library(TSstudio)
@@ -212,6 +215,8 @@ df %>% ggplot(aes(x = ds, y = y)) +
 
 # Testing Fourier Order
 ### Yearly Seasonality
+
+This code chunk was my experimentation.
 ```{r}
 # This code chunk is simply to explore what different parameters in Prophet do.
 # This is also going to be a model for sku_id 1488.
@@ -364,7 +369,7 @@ fcst3 <- fcst3 %>%
   mutate(yhat = ifelse(yhat >= 0, yhat, 0), 
          yhat_lower = ifelse(yhat_lower >= 0, yhat_lower, 0))
 
-prophet_plot_components(fit2, fcst2)
+prophet_plot_components(fit3, fcst3)
 
 # Final plot of forecast
 plot(fit3, fcst3) + 
@@ -423,7 +428,7 @@ err_df3 %>%
 
 
 ### Writing a Function to Build a Model and Calculate Metrics
-```{r}
+```{r, eval=FALSE}
 # See plot for SKU #983 to see how I selected changepoints
 mod2 <- prophet(growth = "linear",
                 changepoints = c("2022-03-11", "2022-06-08"),
@@ -520,7 +525,7 @@ make_model <- function(mod, df) {
 ```
 
 ### Testing Model-Building Function
-```{r}
+```{r, eval=FALSE}
 # This function does not work...
 # There appears to be a problem with models that have more complex hyperparameters.
 make_model(mod = mod2, df = df)
@@ -589,6 +594,17 @@ autoplot(fit_ets)
 checkresiduals(fit_ets)
 ```
 
+```{r}
+fit_ets2 <- ets(y2)
+
+print(summary(fit_ets2))
+
+autoplot(fit_ets2)
+
+checkresiduals(fit_ets2)
+```
+
+
 ### Trying Again Using the `fpp2` Package
 
 I think that I found a nice [article](https://www.geeksforgeeks.org/exponential-smoothing-in-r-programming/?utm_source=pocket_mylist) that explains how to do this with `tidymodels` and `fpp2`. So I am going ot give this a try with simple exponential smoothing (SES).
@@ -610,7 +626,7 @@ sku.train <- ts(data = df$y, frequency = 7, start = c(startW.train, startD.train
 sku.test <- ts(data = eval$y, frequency = 7, start = c(startW.test, startD.test))
 ```
 
-So apparently the `accuracy` function requires a `ts` object such that the `sku.train` and `sku.test` objects are in the 
+So apparently the `accuracy` function requires a `ts` object such that the `sku.train` and `sku.test` objects are indexed where the training data ends and the testing data begins, but I could not do that because I could not get the `stats::window` function to work. both are required, unless I want to hard code my own evaluation function into the code below. I can definitely try this, but it will be a tedious setback.
 
 #### SES With the Trend
 ```{r}
@@ -637,8 +653,8 @@ autoplot(ses.sku.dif)
 ```{r, eval=FALSE}
 # removing trend from test set
 sku.dif.test <- diff(sku.test)
-accuracy(ses.sku.dif, sku.dif.test)
- 
+#accuracy(ses.sku.dif, sku.dif.test)
+
 # comparing our model with other alphas
 alpha <- seq(.01, .99, by = .01)
 RMSE <- NA
@@ -663,4 +679,49 @@ ggplot(alpha.fit, aes(alpha, RMSE)) +
              size = 2, color = "red")
 ```
 
-Well, all of the code above have the 
+Well, all of the code above should work, but for the `accuracy` function, I cannot get the times series objects to line up with respect to indices.
+
+### What I Do Have to Show For
+
+I have compiled metrics for one time series and can easily build two more on other SKU's.
+
+#### A Prophet Model
+```{r}
+# for example
+
+# Get RMSE
+Metrics::rmse(err_df3$y, err_df3$yhat)
+
+# RMSE = 7.603284
+
+# Get SMAPE
+Metrics::smape(err_df3$y, err_df3$yhat) # can be infinity if predicted values in denominator are close to 1
+
+# SMAPE = .2466916
+
+# A MAPE function
+mean(abs((err_df3$y-err_df3$yhat)/err_df3$y))
+
+# MAPE = .340391
+
+err_df3 %>% 
+  ggplot(aes(x = resid)) +
+  geom_histogram(binwidth = 3, 
+                 fill = "orange", 
+                 color = "grey") +
+  labs(title = "Residual Plot",
+       x = "Residual Value",
+       y = "Frequency") +
+  theme_minimal()
+
+```
+
+#### An ETS model
+```{r}
+print(summary(fit_ets))
+
+autoplot(fit_ets)
+
+checkresiduals(fit_ets)
+```
+
