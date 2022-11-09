@@ -43,18 +43,16 @@ split <- by_day_filter %>%
   group_split()
 ```
 
-# Additionally We Will Scale the Data [0,1]
-
-I found that SKU's #757 (`split[[253]]`), #983 (`split[[293]]`), #1487 (`split[[356]]`), have either 338 or 339 observations, so these SKU's will be good to compare the time series modeling process on.
+I found that SKU's #963 (`split[[280]]`), #983 (`split[[293]]`), #1487 (`split[[356]]`), have either 338 or 339 observations, so these SKU's will be good to compare the time series modeling process on.
 
 # Visualization for SKU's
 
 We want to get a glimpse of what we are looking at. Hence, we know that we need to visualize the data for each of these goods.
 
 ```{r}
-# 757
+# 962
 by_day_filter %>% 
-  filter(sku_id == 757) %>% 
+  filter(sku_id == 962) %>% 
   ggplot(aes(x = placed_at, y = qty)) +
   geom_point() +
   geom_smooth() +
@@ -74,7 +72,7 @@ by_day_filter %>%
        y = "Volume Purchased") +
   theme_minimal()
 
-# 1488
+# 1487
 by_day_filter %>% 
   filter(sku_id == 1487) %>% 
   ggplot(aes(x = placed_at, y = qty)) +
@@ -93,7 +91,7 @@ by_day_filter %>%
 # This is going to be a model for SKU_id #983
 
 # Preprocessing
-df <-  split[[293]] 
+df <-  split[[280]] 
 
 # Creating an evaluation data frame
 eval <- df %>% 
@@ -104,6 +102,10 @@ eval <- df %>%
 eval <- eval %>% slice(1:(n() - 1))
 
 orig_df <- df
+
+# filtering outliers that aren't with two standard deviations of the mean
+favstats(df$y) %>% kable()
+df <- df %>% filter(near(y, mean(df$y), tol = 2*stats::sd(df$y)))
 
 df <- df %>% filter(ds < max(df$ds) - weeks(8))
 ```
@@ -687,41 +689,50 @@ library(fable)
 ```
 ```{r}
 mdl_ses <- as_tsibble(orig_df) %>% 
-  tsibble::fill_gaps(y = 0) %>% 
+  tsibble::fill_gaps(y = mean(y)) %>% 
   model(ETS(y ~ error("A") + trend("N") + season("N")))
 
 mdl_ses %>% report()
 
 mdl_ses %>% components()
 ```
+```{r}
+# Making an autocorrelation plot
+#library(feasts)
+
+orig_df %>% 
+  as_tsibble() %>% 
+  tsibble::fill_gaps(y = mean(y)) %>%
+  gg_tsdisplay(difference(y), plot_type='partial')
+```
 
 The code chunk below was strugling with the `map_dbl(y, ~pluck(.x, "sigma"))` function. I could not get it to return the standard deviation at each new time series increment.
 
 ```{r, eval=FALSE}
 mdl_ses_fc <- mdl_ses %>%
-  forecast(h = 5) %>%
-  mutate(sigma = map_dbl(y, ~pluck(.x, "sigma")),
-         ci_025 = qnorm(.025, .mean, sigma),
-         ci_975 = qnorm(.975, .mean, sigma))
+  forecast(h = 5) #%>%
+  #mutate(sigma = map_dbl(y, ~pluck(.x, "sigma")),
+         #ci_025 = qnorm(.025, .mean, sigma),
+         #ci_975 = qnorm(.975, .mean, sigma))
 
 mdl_ses %>%
   augment() %>%
   ggplot(aes(x = ds)) +
   geom_line(aes(y = y)) +
-  geom_line(aes(y = .fitted), color = "goldenrod") +
-  geom_line(data = mdl_ses_fc, aes(y = .mean), color = "goldenrod") +
-  geom_ribbon(data = mdl_ses_fc, 
-              aes(ymin = ci_025, ymax = ci_975),
-              alpha = 0.2, fill = "goldenrod") +
+  geom_line(aes(y = .fitted), color = "orange") +
+  geom_line(data = mdl_ses_fc, aes(y = .mean), color = "orange") +
+  #geom_ribbon(data = mdl_ses_fc, 
+              #aes(ymin = ci_025, ymax = ci_975),
+              #alpha = 0.2, fill = "goldenrod") +
   theme_light() +
   labs(title = "Simple Exponential Smoothing ETS(A, N, N)",
-       subtitle = "Algerian exports (% of GDP).")
+       subtitle = "Quantity of SKU per Day")
 ```
 
 The neat part is that I found code to run a comparative time series approach in [this bookdown](https://bookdown.org/mpfoley1973/time-series/exponential.html).
 
 ```{r}
-library(tsibble)
+#library(tsibble)
 orig_df %>%
   select(ds, y) %>% 
   as_tsibble() %>%
@@ -734,7 +745,7 @@ orig_df %>%
     `Holt's method (damped)` = ETS(y ~ error("A") + trend("Ad") + season("N"))
   ) %>%
   forecast(h = 1) %>%
-  accuracy(data = as_tsibble(orig_df)) # This was so cool!
+  accuracy(data = as_tsibble(orig_df))
 ```
 
 **I need to make sure I cite the packages and also the bookdown on my poster.**
@@ -822,7 +833,10 @@ df <- df %>% filter(ds < max(df$ds) - weeks(8))
 ```
 
 #### Classifying the Time Series as White Noise
-To classify a time series as white noise, three assumptions must be met.
+To classify a time series as white noise, three assumptions must be met:
+ - The average value (mean) is zero.
+ - Standard deviation is constant; it doesn’t change over time.
+ - The correlation between time series and its lagged version is not significant.
 
 ```{r}
 # 1488
@@ -856,6 +870,8 @@ startD <- as.numeric(strftime(head(df$ds, 1) + 1, format =" %w"))
 print(ts(data = df$y, frequency = 7, start = c(startW, startD)), calendar = T)
 ```
 
+My attempt at an autocorrelation plot:
+
 ```{r}
 # Making a time series object
 y <- ts(data = df$y, frequency = 7, start = c(startW, startD))
@@ -874,7 +890,7 @@ mod4 <- prophet(growth = "linear",
                 daily.seasonality = FALSE,
                 seasonality.prior.scale = 10,
                 holiday.prior.scale = 10,
-                changepoint.prior.scale = 0.4,
+                changepoint.prior.scale = 0.40,
                 mcmc.samples = 0,
                 interval.width = 0.8,
                 uncertainty.samples = 1000,
@@ -936,19 +952,19 @@ err_df4 <- err_df4 %>% filter(y != 0)
 # Get RMSE
 Metrics::rmse(err_df4$y, err_df4$yhat)
 
-# RMSE = 7.603284
+# RMSE = 15.52143
 
 # Get SMAPE
 Metrics::smape(err_df4$y, err_df4$yhat) # can be infinity if predicted values in denominator are close to 1
 
-# SMAPE = .2466916
+# SMAPE = .2960448
 
 # A MAPE function
 mean(abs((err_df4$y-err_df4$yhat)/err_df4$y))
 
-# MAPE = .340391
+# MAPE = .3697768
 
-err_df4 %>% 
+err_df4 %>%  
   ggplot(aes(x = resid)) +
   geom_histogram(binwidth = 5, 
                  fill = "orange", 

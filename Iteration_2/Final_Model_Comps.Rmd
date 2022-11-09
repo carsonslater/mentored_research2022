@@ -1,0 +1,137 @@
+---
+title: "Final Model Comparisons"
+author: "Carson Slater"
+date: '2022-11-09'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Forecasting Demand Using Generallized Additive Models
+
+## Introduction
+When contemplating the idea of how to help efficiency within the market for FMCG demand, I came to the conclusion that any tool to minimize sunk costs would be a useful tool. For the FMCG industry, particularly with perishable goods, there exists need to forecast quantity demanded for particular FMCG's, which begs the question: which forecasting method should be used?
+
+I had been shown a really convenient, nice new algorithm developed by Facebook called `Prophet`. It claims to be able to 'forecast at scale,' meaning that it is able to produce elegant, fairly accurate, intuitive forecasts for people who have had little training in time-series analysis and forecasting. How does it stack against other well known methods like those developed by [Hyndmman](https://robjhyndman.com).
+
+Most of the data cleaning was done in my [`Data_Transformation_II.Rmd`](https://github.com/carsonslater/mentored_research2022/blob/Main/Iteration_2/Data_Transformation_II.Rmd), and the analysis (though quite messy) was done in my [`Model_Comparison.Rmd`](https://github.com/carsonslater/mentored_research2022/blob/Main/Iteration_2/Model_Comparison.Rmd). Here in this `.Rmd`, you will find the distilled findings and the things I used to make my poster with for the [2022 UIC UMS](https://homepages.math.uic.edu/ums/).
+
+```{r, include=FALSE}
+# loading packages
+library(tidymodels)
+library(tinytex)
+library(stringr)
+library(janitor)
+library(glmnet)
+library(lubridate)
+library(knitr)
+library(mosaic)
+library(prophet)
+library(forecast)
+library(fable)
+library(Metrics)
+```
+
+# Loading the Data
+```{r, eval=TRUE}
+# Make sure you have your working directory configured such that it can find these data.
+load("eval_data.Rdata")
+```
+
+A quick note for variable names:
+ -`df1`, or anything that ends in a "1" corresponds to `sku_id` 983
+ -`df2`, or anything that ends in a "2" corresponds to `sku_id` 963 (I am aware these id's are in any order)
+ -`df3`, or anything that ends in a "3" corresponds to `sku_id` 1487
+ 
+## Examining the Data
+### Visualizing the Time Series
+
+The three time series we have are as such:
+```{r}
+# 962
+orig_df1 %>% 
+  ggplot(aes(x = ds, y = y)) +
+  geom_point(color = "black", alpha = 0.5) +
+  geom_smooth() +
+  geom_line(color = "cornflowerblue", alpha = 0.8) +
+  labs(x = "Date",
+       y = "Volume Purchased",
+       caption= "`sku_id` 962") +
+  theme_minimal()
+
+# 983
+orig_df2 %>% 
+  ggplot(aes(x = ds, y = y)) +
+  geom_point(color = "black", alpha = 0.5) +
+  geom_smooth() +
+  geom_line(color = "cornflowerblue", alpha = 0.8) +
+  labs(x = "Date",
+       y = "Volume Purchased",
+       caption= "`sku_id` 983") +
+  theme_minimal()
+
+
+# 1487
+orig_df3 %>% 
+  ggplot(aes(x = ds, y = y)) +
+  geom_point(color = "black", alpha = 0.5) +
+  geom_smooth() +
+  geom_line(color = "cornflowerblue", alpha = 0.8) +
+  labs(x = "Date",
+       y = "Volume Purchased",
+       caption= "`sku_id` 1487") +
+  theme_minimal()
+```
+
+The ACF and PACF plots are shown here:
+```{r}
+orig_df1 %>% 
+  as_tsibble() %>% 
+  tsibble::fill_gaps(y = mean(y)) %>%
+  gg_tsdisplay(y, plot_type='partial')
+
+orig_df2 %>% 
+  as_tsibble() %>% 
+  tsibble::fill_gaps(y = mean(y)) %>%
+  gg_tsdisplay(y, plot_type='partial')
+
+orig_df3 %>% 
+  as_tsibble() %>% 
+  tsibble::fill_gaps(y = mean(y)) %>%
+  gg_tsdisplay(y, plot_type='partial')
+```
+
+For these time series, we see that the ACF exceeds the threshold; there also exists small amounts of non-stationarity. They also do not seem to have 
+
+# Modeling for `sku_id` 962
+
+For a baseline model, we need to compare some exponential smoothing methods. To classify a time series as white noise, three assumptions must be met:
+ - The average value (mean) is zero. (Could be true for differenced data)
+ - Standard deviation is constant; it doesn’t change over time.
+ - The correlation between time series and its lagged version is not significant.
+
+It does not appear that there is too much variation over time, so we will not perform a Box-Cox transformation.
+
+Fortunately, for exponential smoothing, there is no need for assuming if a model is a random walk or a white noise series.
+
+Below are some of the metrics for some fitted baseline models. I used code to run a comparative time series approach from [this bookdown](https://bookdown.org/mpfoley1973/time-series/exponential.html).
+
+```{r}
+orig_df1 %>%
+  select(ds, y) %>% 
+  as_tsibble() %>%
+  tsibble::fill_gaps(y = mean(y)) %>% 
+  stretch_tsibble(.init = 7, .step = 1) %>%
+  model(
+    OLS = TSLM(y ~ ds),
+    `Simple Exponential Smoothing` = ETS(y ~ error("A") + trend("N") + season("N")),
+    `Holt's method` = ETS(y ~ error("A") + trend("A") + season("N")),
+    `Holt's method (damped)` = ETS(y ~ error("A") + trend("Ad") + season("N")),
+    `Stepwise ARIMA` = ARIMA(y, stepwise = TRUE),
+    `Greedy ARIMA` = ARIMA(y, greedy = TRUE)
+  ) %>%
+  forecast(h = 1) %>% fabletools::accuracy(data = as_tsibble(orig_df1))
+```
+
