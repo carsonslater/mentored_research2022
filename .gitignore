@@ -8,10 +8,12 @@ SKU_lm1.Rdata
 =======
 >>>>>>> a38ebfccc44e5de64a478193196e0e0c4aaf369f
 =======
->>>>>>> a38ebfccc44e5de64a478193196e0e0c4aaf369f
 baskets_sample_random_10.csv
 .Rproj.user
 Data_Iteration2.Rdata
 Model_Comparison.ipynb
 mentored_research2022.Rproj
 .html
+.DS_Store
+eval_data.Rdata
+Iteration_2/.DS_Store
