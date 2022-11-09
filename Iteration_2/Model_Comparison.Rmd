@@ -76,7 +76,7 @@ by_day_filter %>%
 
 # 1488
 by_day_filter %>% 
-  filter(sku_id == 1488) %>% 
+  filter(sku_id == 1487) %>% 
   ggplot(aes(x = placed_at, y = qty)) +
   geom_point() +
   geom_smooth() +
@@ -86,11 +86,11 @@ by_day_filter %>%
   theme_minimal()
 ```
 
-`sku_id` 757 appears to be a good where most of the time, the total volume distributed per day is below 10. This means it might not be the most urgent good to forecase. The other two, `sku_id` 983 and 1488 appear to be more seasonal and unpredictable with trend changes.
+`sku_id` 757 appears to be a good where most of the time, the total volume distributed per day is below 10. This means it might not be the most urgent good to forecase. The other two, `sku_id` 983 and 1487 appear to be more seasonal and unpredictable with trend changes.
 
 # Building a Benchmark `Prophet` Model
 ```{r}
-# This is going to be a model for SKU_id 1488.
+# This is going to be a model for SKU_id #983
 
 # Preprocessing
 df <-  split[[293]] 
@@ -213,7 +213,7 @@ df %>% ggplot(aes(x = ds, y = y)) +
   scale_x_date(date_labels = "%Y %b %d")
 ```
 
-# Testing Fourier Order
+### Testing Fourier Order
 ### Yearly Seasonality
 
 This code chunk was my experimentation.
@@ -681,7 +681,7 @@ ggplot(alpha.fit, aes(alpha, RMSE)) +
 
 Well, all of the code above should work, but for the `accuracy` function, I cannot get the times series objects to line up with respect to indices.
 
-### What I Do Have to Show For
+# What I Do Have to Show For
 
 I have compiled metrics for one time series and can easily build two more on other SKU's.
 
@@ -706,7 +706,7 @@ mean(abs((err_df3$y-err_df3$yhat)/err_df3$y))
 
 err_df3 %>% 
   ggplot(aes(x = resid)) +
-  geom_histogram(binwidth = 3, 
+  geom_histogram(binwidth = 1, 
                  fill = "orange", 
                  color = "grey") +
   labs(title = "Residual Plot",
@@ -728,3 +728,157 @@ checkresiduals(fit_ets)
 ```
 
 Again, the residuals look normally distributed, which means that the model does not appear to be overfitting, nor does it appear to be leaving some information out. The only issue is that the RMSE slightly larger.
+
+#### Removing Outliers Idea
+Remove outlier and impute? (Do not have time before project deadline.)
+
+# Using a Different SKU
+```{r}
+# This is going to be a model for sku_id #1487
+
+# Preprocessing
+df <-  split[[356]] 
+```
+
+There are a couple outliers in this dataframe.
+```{r}
+#library(mosaic)
+favstats(df$y) %>% kable()
+df <- df %>% filter(near(y, mean(df$y), tol = 2*stats::sd(df$y)))
+```
+
+```{r}
+
+# Creating an evaluation data frame
+eval <- df %>% 
+  filter(ds >= max(df$ds) - weeks(8)) %>% 
+  complete(ds = seq.Date(min(ds), max(ds), by="day")) %>% 
+  mutate(y = ifelse(is.na(y), 0, y))
+  
+eval <- eval %>% slice(1:(n() - 1))
+
+orig_df <- df
+
+df <- df %>% filter(ds < max(df$ds) - weeks(8))
+```
+
+#### Classifying the Time Series as White Noise
+To classify a time series as white noise, three assumptions must be met.
+
+```{r}
+# 1488
+by_day_filter %>% 
+  filter(sku_id == 1487) %>% 
+  ggplot(aes(x = placed_at, y = qty)) +
+  #geom_point() +
+  geom_smooth() +
+  geom_line(color = "red", alpha = 0.8) +
+  labs(x = "Date",
+       y = "Volume Purchased") +
+  theme_minimal()
+
+orig_df.dif <- diff(orig_df$y)
+
+mean(orig_df.dif) # Mean is close to zero, so we can assume this is white noise
+
+orig_df %>% 
+  head(324) %>% 
+  ggplot(aes(x = ds, y = orig_df.dif)) +
+  geom_line(color = "red")
+```
+
+
+From the plot it looks like the changepoints are at 04-09-2022 and 06-15-2022.
+
+```{r}
+# See plot for SKU #983 to see how I selected changepoints
+mod4 <- prophet(growth = "linear",
+                changepoints = c("2022-04-09", "2022-06-15"),
+                yearly.seasonality = FALSE,
+                daily.seasonality = FALSE,
+                seasonality.prior.scale = 10,
+                holiday.prior.scale = 10,
+                changepoint.prior.scale = 0.4,
+                mcmc.samples = 0,
+                interval.width = 0.8,
+                uncertainty.samples = 1000,
+                fit = FALSE
+                )
+
+# Fitting the Model
+fit4 <- fit.prophet(mod4, df)
+
+# 2 Months
+future <- make_future_dataframe(fit4, periods = 8*7)
+
+# Make a forecast
+fcst4 <- predict(fit4, future)
+
+##########################################################
+# Since we cannot have negative predictive quantities, 
+# I invert the upper confidence interval and set the 
+# negative yhats to zero
+##########################################################
+
+fcst4 <- fcst4 %>% mutate(diff = yhat_upper - yhat)
+
+fcst4 <- fcst4 %>%
+  mutate(yhat_upper = ifelse(yhat_upper >= 0, yhat_upper, diff)) %>% 
+  mutate(yhat = ifelse(yhat >= 0, yhat, 0), 
+         yhat_lower = ifelse(yhat_lower >= 0, yhat_lower, 0))
+
+prophet_plot_components(fit4, fcst4)
+
+# Final plot of forecast
+plot(fit4, fcst4) + 
+  add_changepoints_to_plot(m = fit4, cp_color = "orange") +
+  labs(title = "Fitted Model and Forecast of an SKU",
+       x = "Date",
+       y = "Volume Purchased") +
+  theme_minimal()
+```
+
+```{r}
+# Model Evaluation
+pred4 <- fcst4 %>% filter(ds >= max(orig_df$ds) - weeks(8)) %>%
+  select(ds, yhat_lower, yhat, yhat_upper)
+
+# Make a tibble of errors from the days
+err_df4 <- tibble(pred4$ds, eval$y, pred4$yhat)
+
+colnames(err_df4) <- c("ds", "y", "yhat")
+
+# creating a residual column
+err_df4 <- err_df4 %>% mutate(resid = y - yhat)
+
+# We need to filter zeros for the err_df so that we can find MAPE
+# If the observed value is zero, MAPE is infinity.
+err_df4 <- err_df4 %>% filter(y != 0)
+
+#library(Metrics)
+
+# Get RMSE
+Metrics::rmse(err_df4$y, err_df4$yhat)
+
+# RMSE = 7.603284
+
+# Get SMAPE
+Metrics::smape(err_df4$y, err_df4$yhat) # can be infinity if predicted values in denominator are close to 1
+
+# SMAPE = .2466916
+
+# A MAPE function
+mean(abs((err_df4$y-err_df4$yhat)/err_df4$y))
+
+# MAPE = .340391
+
+err_df4 %>% 
+  ggplot(aes(x = resid)) +
+  geom_histogram(binwidth = 5, 
+                 fill = "orange", 
+                 color = "grey") +
+  labs(title = "Residual Plot",
+       x = "Residual Value",
+       y = "Frequency") +
+  theme_minimal()
+````
