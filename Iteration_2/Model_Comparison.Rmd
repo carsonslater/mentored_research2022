@@ -585,7 +585,7 @@ autoplot(y2)
 ```
 
 ```{r}
-fit_ets <- ets(y)
+fit_ets <- ets(y, alpha = 0.2)
 
 print(summary(fit_ets))
 
@@ -681,6 +681,64 @@ ggplot(alpha.fit, aes(alpha, RMSE)) +
 
 Well, all of the code above should work, but for the `accuracy` function, I cannot get the times series objects to line up with respect to indices.
 
+### SES Using the `fable` Package
+```{r}
+library(fable)
+```
+```{r}
+mdl_ses <- as_tsibble(orig_df) %>% 
+  tsibble::fill_gaps(y = 0) %>% 
+  model(ETS(y ~ error("A") + trend("N") + season("N")))
+
+mdl_ses %>% report()
+
+mdl_ses %>% components()
+```
+
+The code chunk below was strugling with the `map_dbl(y, ~pluck(.x, "sigma"))` function. I could not get it to return the standard deviation at each new time series increment.
+
+```{r, eval=FALSE}
+mdl_ses_fc <- mdl_ses %>%
+  forecast(h = 5) %>%
+  mutate(sigma = map_dbl(y, ~pluck(.x, "sigma")),
+         ci_025 = qnorm(.025, .mean, sigma),
+         ci_975 = qnorm(.975, .mean, sigma))
+
+mdl_ses %>%
+  augment() %>%
+  ggplot(aes(x = ds)) +
+  geom_line(aes(y = y)) +
+  geom_line(aes(y = .fitted), color = "goldenrod") +
+  geom_line(data = mdl_ses_fc, aes(y = .mean), color = "goldenrod") +
+  geom_ribbon(data = mdl_ses_fc, 
+              aes(ymin = ci_025, ymax = ci_975),
+              alpha = 0.2, fill = "goldenrod") +
+  theme_light() +
+  labs(title = "Simple Exponential Smoothing ETS(A, N, N)",
+       subtitle = "Algerian exports (% of GDP).")
+```
+
+The neat part is that I found code to run a comparative time series approach in [this bookdown](https://bookdown.org/mpfoley1973/time-series/exponential.html).
+
+```{r}
+library(tsibble)
+orig_df %>%
+  select(ds, y) %>% 
+  as_tsibble() %>%
+  tsibble::fill_gaps(y = mean(y)) %>% 
+  stretch_tsibble(.init = 7, .step = 1) %>%
+  model(
+    OLS = TSLM(y ~ ds),
+    `Simple Exponential Smoothing` = ETS(y ~ error("A") + trend("N") + season("N")),
+    `Holt's method` = ETS(y ~ error("A") + trend("A") + season("N")),
+    `Holt's method (damped)` = ETS(y ~ error("A") + trend("Ad") + season("N"))
+  ) %>%
+  forecast(h = 1) %>%
+  accuracy(data = as_tsibble(orig_df)) # This was so cool!
+```
+
+**I need to make sure I cite the packages and also the bookdown on my poster.**
+
 # What I Do Have to Show For
 
 I have compiled metrics for one time series and can easily build two more on other SKU's.
@@ -740,7 +798,8 @@ Remove outlier and impute? (Do not have time before project deadline.)
 df <-  split[[356]] 
 ```
 
-There are a couple outliers in this dataframe.
+There are a couple outliers in this dataframe. So I took out the observations that were not within two standard deviations of the time series.
+
 ```{r}
 #library(mosaic)
 favstats(df$y) %>% kable()
@@ -781,10 +840,27 @@ orig_df.dif <- diff(orig_df$y)
 
 mean(orig_df.dif) # Mean is close to zero, so we can assume this is white noise
 
+# Take the first difference of the times series to get a white noise series
 orig_df %>% 
   head(324) %>% 
   ggplot(aes(x = ds, y = orig_df.dif)) +
   geom_line(color = "red")
+
+# We want to plot an autocorrelation plot to further check if this is a white noise time series
+
+# Finding the date-time conversions for the start day and week
+startW <- as.numeric(strftime(head(df$ds, 1), format = "%W"))
+startD <- as.numeric(strftime(head(df$ds, 1) + 1, format =" %w"))
+
+# Checking to see if the time series will work with the date transformation
+print(ts(data = df$y, frequency = 7, start = c(startW, startD)), calendar = T)
+```
+
+```{r}
+# Making a time series object
+y <- ts(data = df$y, frequency = 7, start = c(startW, startD))
+
+acf(y, lag.max = 10, plot = TRUE, type = "correlation")
 ```
 
 
