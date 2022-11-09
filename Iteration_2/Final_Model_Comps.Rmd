@@ -6,7 +6,11 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
 ```
 
 # Forecasting Demand Using Generallized Additive Models
@@ -118,6 +122,8 @@ Fortunately, for exponential smoothing, there is no need for assuming if a model
 
 Below are some of the metrics for some fitted baseline models. I used code to run a comparative time series approach from [this bookdown](https://bookdown.org/mpfoley1973/time-series/exponential.html).
 
+#### Models by Hyndman
+
 ```{r}
 orig_df1 %>%
   select(ds, y) %>% 
@@ -135,3 +141,188 @@ orig_df1 %>%
   forecast(h = 1) %>% fabletools::accuracy(data = as_tsibble(orig_df1))
 ```
 
+The output is a comparison of several fitted models based on their metrics. Of these models, the one with the best performance appears to be the ARIMA models. Let's investigate which kind of ARIMA model this is.
+
+```{r}
+## TODO
+```
+
+#### Baseline Prophet Model
+```{r}
+mod1 <- prophet(df1, 
+               yearly.seasonality = TRUE, 
+               fit = FALSE, 
+               interval.width = 0.8) %>% 
+  add_country_holidays(country_name = 'ID')
+
+fit1 <- fit.prophet(mod1, df1)
+
+# 2 Months
+future1 <- make_future_dataframe(fit1, periods = 8*7)
+
+# Make a forecast
+fcst1 <- predict(fit1, future1)
+
+##########################################################
+# Since we cannot have negative predictive quantities, 
+# I invert the upper confidence interval and set the 
+# negative yhats to zero
+##########################################################
+
+fcst1 <- fcst1 %>% mutate(diff = yhat_upper - yhat)
+
+fcst1 <- fcst1 %>%
+  mutate(yhat_upper = ifelse(yhat_upper >= 0, yhat_upper, diff)) %>% 
+  mutate(yhat = ifelse(yhat >= 0, yhat, 0), 
+         yhat_lower = ifelse(yhat_lower >= 0, yhat_lower, 0))
+
+prophet_plot_components(fit1, fcst1)
+
+# Final plot of forecast
+plot(fit1, fcst1) + 
+  add_changepoints_to_plot(m = fit1, cp_color = "orange") +
+  labs(title = "Fitted Model and Forecast of an SKU",
+       x = "Date",
+       y = "Volume Purchased") +
+  theme_minimal()
+```
+
+```{r}
+# Model Evaluation
+pred1 <- fcst1 %>% filter(ds >= max(orig_df1$ds) - weeks(8)) %>%
+  select(ds, yhat_lower, yhat, yhat_upper)
+
+# Make a tibble of errors from the days
+err_df1 <- tibble(pred1$ds, eval1$y, pred1$yhat)
+
+colnames(err_df1) <- c("ds", "y", "yhat")
+
+# creating a residual column
+err_df1 <- err_df1 %>% mutate(resid = y - yhat)
+
+# We need to filter zeros for the err_df so that we can find MAPE
+# If the observed value is zero, MAPE is infinity.
+err_df1 <- err_df1 %>% filter(y != 0)
+
+#library(Metrics)
+
+# Get RMSE
+Metrics::rmse(err_df1$y, err_df1$yhat)
+
+# RMSE = 35.39017
+
+# Get SMAPE
+Metrics::smape(err_df1$y, err_df1$yhat) # can be infinity if predicted values in denominator are close to 1
+
+# SMAPE = .24631
+
+# A MAPE function
+mean(abs((err_df1$y-err_df1$yhat)/err_df1$y))
+
+# MAPE = .29682
+
+err_df1 %>% 
+  ggplot(aes(x = resid)) +
+  geom_histogram(binwidth = 5, 
+                 fill = "orange", 
+                 color = "grey") +
+  labs(title = "Residual Plot",
+       x = "Residual Value",
+       y = "Frequency") +
+  theme_minimal()
+```
+
+This model is good, but
+#### Tuned Prophet Model for `sku_id` 962
+```{r}
+mod1.2 <- prophet(growth = "linear",
+                changepoints = c("2021-10-20", 
+                                 "2021-12-04", 
+                                 "2022-01-09", 
+                                 "2022-03-02",
+                                 "2022-03-28",
+                                 "2022-04-12",
+                                 "2022-07-02",
+                                 "2022-07-26"
+                                 ),
+                yearly.seasonality = FALSE,
+                daily.seasonality = FALSE,
+                seasonality.prior.scale = 10,
+                holiday.prior.scale = 10,
+                changepoint.prior.scale = .8,
+                mcmc.samples = 0,
+                interval.width = 0.8,
+                uncertainty.samples = 1000,
+                fit = FALSE
+                )
+# Fitting the Model
+fit1.2 <- fit.prophet(mod1.2, df1)
+
+# 2 Months
+future1.2 <- make_future_dataframe(fit1.2, periods = 8*7)
+
+# Make a forecast
+fcst1.2 <- predict(fit1.2, future1.2)
+
+##########################################################
+# Since we cannot have negative predictive quantities, 
+# I invert the upper confidence interval and set the 
+# negative yhats to zero
+##########################################################
+
+fcst1.2 <- fcst1.2 %>% mutate(diff = yhat_upper - yhat)
+
+fcst1.2 <- fcst1.2 %>%
+  mutate(yhat_upper = ifelse(yhat_upper >= 0, yhat_upper, diff)) %>% 
+  mutate(yhat = ifelse(yhat >= 0, yhat, 0), 
+         yhat_lower = ifelse(yhat_lower >= 0, yhat_lower, 0))
+
+prophet_plot_components(fit1.2, fcst1.2)
+
+# Final plot of forecast
+plot(fit1.2, fcst1.2) + 
+  add_changepoints_to_plot(m = fit1.2, cp_color = "orange") +
+  labs(title = "Fitted Model and Forecast of an SKU",
+       x = "Date",
+       y = "Volume Purchased") +
+  theme_minimal()
+```
+
+```{r}
+# Model Evaluation
+pred1.2 <- fcst1.2 %>% filter(ds >= max(orig_df1$ds) - weeks(8)) %>%
+  select(ds, yhat_lower, yhat, yhat_upper)
+
+# Make a tibble of errors from the days
+err_df1.2 <- tibble(pred1.2$ds, eval1$y, pred1.2$yhat)
+
+colnames(err_df1.2) <- c("ds", "y", "yhat")
+
+# creating a residual column
+err_df1.2 <- err_df1.2 %>% mutate(resid = y - yhat)
+
+# We need to filter zeros for the err_df so that we can find MAPE
+# If the observed value is zero, MAPE is infinity.
+err_df1.2 <- err_df1.2 %>% filter(y != 0)
+
+#library(Metrics)
+
+# Get RMSE
+Metrics::rmse(err_df1.2$y, err_df1.2$yhat)
+
+# Get SMAPE
+Metrics::smape(err_df1.2$y, err_df1.2$yhat) # can be infinity if predicted values in denominator are close to 1
+
+# A MAPE function
+mean(abs((err_df1.2$y-err_df1.2$yhat)/err_df1.2$y))
+
+err_df1.2 %>% 
+  ggplot(aes(x = resid)) +
+  geom_histogram(binwidth = 5, 
+                 fill = "orange", 
+                 color = "grey") +
+  labs(title = "Residual Plot",
+       x = "Residual Value",
+       y = "Frequency") +
+  theme_minimal()
+```
