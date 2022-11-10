@@ -1,5 +1,5 @@
 ---
-title: "Final Model Comparisons"
+title: "Forecasting Demand Using Generallized Additive Models"
 author: "Carson Slater"
 date: '2022-11-09'
 output: html_document
@@ -12,8 +12,6 @@ knitr::opts_chunk$set(
 	warning = FALSE
 )
 ```
-
-# Forecasting Demand Using Generallized Additive Models
 
 ## Introduction
 When contemplating the idea of how to help efficiency within the market for FMCG demand, I came to the conclusion that any tool to minimize sunk costs would be a useful tool. For the FMCG industry, particularly with perishable goods, there exists need to forecast quantity demanded for particular FMCG's, which begs the question: which forecasting method should be used?
@@ -38,15 +36,15 @@ library(fable)
 library(Metrics)
 ```
 
-# Loading the Data
+## Loading the Data
 ```{r, eval=TRUE}
 # Make sure you have your working directory configured such that it can find these data.
 load("eval_data.Rdata")
 ```
 
 A quick note for variable names:
- -`df1`, or anything that ends in a "1" corresponds to `sku_id` 983
- -`df2`, or anything that ends in a "2" corresponds to `sku_id` 963 (I am aware these id's are in any order)
+ -`df1`, or anything that ends in a "1" corresponds to `sku_id` 963
+ -`df2`, or anything that ends in a "2" corresponds to `sku_id` 983
  -`df3`, or anything that ends in a "3" corresponds to `sku_id` 1487
  
 ## Examining the Data
@@ -109,23 +107,23 @@ orig_df3 %>%
 
 For these time series, we see that the ACF exceeds the threshold; there also exists small amounts of non-stationarity. They also do not seem to have 
 
-# Modeling for `sku_id` 962
+# Modeling Methodology
 
-For a baseline model, we need to compare some exponential smoothing methods. To classify a time series as white noise, three assumptions must be met:
+For some baseline models, we need to compare some exponential smoothing methods. To classify a time series as white noise, three assumptions must be met:
  - The average value (mean) is zero. (Could be true for differenced data)
  - Standard deviation is constant; it doesn’t change over time.
  - The correlation between time series and its lagged version is not significant.
 
-It does not appear that there is too much variation over time, so we will not perform a Box-Cox transformation.
+It does not appear that there is too much variation over time, so we will not perform a Box-Cox transformation. For these time series, there does not appear to be changing variation over time with the exception of a few outliers.
 
 Fortunately, for exponential smoothing, there is no need for assuming if a model is a random walk or a white noise series.
 
 Below are some of the metrics for some fitted baseline models. I used code to run a comparative time series approach from [this bookdown](https://bookdown.org/mpfoley1973/time-series/exponential.html).
 
-#### Models by Hyndman
-
+# Modeling for `sku_id` 962
+#### Models for Benchmarking
 ```{r}
-orig_df1 %>%
+df1 %>%
   select(ds, y) %>% 
   as_tsibble() %>%
   tsibble::fill_gaps(y = mean(y)) %>% 
@@ -138,7 +136,7 @@ orig_df1 %>%
     `Stepwise ARIMA` = ARIMA(y, stepwise = TRUE),
     `Greedy ARIMA` = ARIMA(y, greedy = TRUE)
   ) %>%
-  forecast(h = 1) %>% fabletools::accuracy(data = as_tsibble(orig_df1))
+  forecast(h = "8 weeks") %>% fabletools::accuracy(data = as_tsibble(orig_df1))
 ```
 
 The output is a comparison of several fitted models based on their metrics. Of these models, the one with the best performance appears to be the ARIMA models. Let's investigate which kind of ARIMA model this is.
@@ -232,7 +230,8 @@ err_df1 %>%
   theme_minimal()
 ```
 
-This model is good, but
+This model is good, but change points can definitely be added to tell `Prophet` more information about the time-series.
+
 #### Tuned Prophet Model for `sku_id` 962
 ```{r}
 mod1.2 <- prophet(growth = "linear",
@@ -326,3 +325,234 @@ err_df1.2 %>%
        y = "Frequency") +
   theme_minimal()
 ```
+
+# Modeling for `sku_id` 983
+
+Using the same protocol, I am going to build all the same models for a different, less variable time series (meaning this time series is a little more well-behaved.)
+
+#### Models for Benchmarking
+```{r}
+df2 %>%
+  select(ds, y) %>% 
+  as_tsibble() %>%
+  tsibble::fill_gaps(y = mean(y)) %>% 
+  stretch_tsibble(.init = 7, .step = 1) %>%
+  model(
+    OLS = TSLM(y ~ ds),
+    `Simple Exponential Smoothing` = ETS(y ~ error("A") + trend("N") + season("N")),
+    `Holt's method` = ETS(y ~ error("A") + trend("A") + season("N")),
+    `Holt's method (damped)` = ETS(y ~ error("A") + trend("Ad") + season("N")),
+    `Stepwise ARIMA` = ARIMA(y, stepwise = TRUE),
+    `Greedy ARIMA` = ARIMA(y, greedy = TRUE)
+  ) %>%
+  forecast(h = "8 weeks") %>% fabletools::accuracy(data = as_tsibble(orig_df2))
+```
+
+Of these results, the ARIMA models appear to be performing the best; however, the SES model was not far behind with model performance.
+
+```{r}
+## TODO - find the ARIMA model
+```
+
+#### Baseline `Prophet` Model
+```{r}
+mod2 <- prophet(df2, 
+               yearly.seasonality = FALSE, 
+               fit = FALSE, 
+               interval.width = 0.8) %>% 
+  add_country_holidays(country_name = 'ID')
+
+fit2 <- fit.prophet(mod2, df2)
+
+# 2 Months
+future2 <- make_future_dataframe(fit2, periods = 8*7)
+
+# Make a forecast
+fcst2 <- predict(fit2, future2)
+
+##########################################################
+# Since we cannot have negative predictive quantities, 
+# I invert the upper confidence interval and set the 
+# negative yhats to zero
+##########################################################
+
+fcst2 <- fcst2 %>% mutate(diff = yhat_upper - yhat)
+
+fcst2 <- fcst2 %>%
+  mutate(yhat_upper = ifelse(yhat_upper >= 0, yhat_upper, diff)) %>% 
+  mutate(yhat = ifelse(yhat >= 0, yhat, 0), 
+         yhat_lower = ifelse(yhat_lower >= 0, yhat_lower, 0))
+
+prophet_plot_components(fit2, fcst2)
+
+# Final plot of forecast
+plot(fit2, fcst2) + 
+  add_changepoints_to_plot(m = fit2, cp_color = "orange") +
+  labs(title = "Fitted Model and Forecast of an SKU",
+       x = "Date",
+       y = "Volume Purchased") +
+  theme_minimal()
+```
+
+```{r}
+# Model Evaluation
+pred2 <- fcst2 %>% filter(ds >= max(orig_df2$ds) - weeks(8)) %>%
+  select(ds, yhat_lower, yhat, yhat_upper)
+
+# Make a tibble of errors from the days
+err_df2 <- tibble(pred2$ds, eval2$y, pred2$yhat)
+
+colnames(err_df2) <- c("ds", "y", "yhat")
+
+# creating a residual column
+err_df2 <- err_df2 %>% mutate(resid = y - yhat)
+
+# We need to filter zeros for the err_df so that we can find MAPE
+# If the observed value is zero, MAPE is infinity.
+err_df2 <- err_df2 %>% filter(y != 0)
+
+#library(Metrics)
+
+# Get RMSE
+Metrics::rmse(err_df2$y, err_df2$yhat)
+
+# RMSE = 7.279447
+
+# Get SMAPE
+Metrics::smape(err_df2$y, err_df2$yhat) # can be infinity if predicted values in denominator are close to 1
+
+# SMAPE = .2569114
+
+# A MAPE function
+mean(abs((err_df2$y-err_df2$yhat)/err_df2$y))
+
+# MAPE = ..2825229
+
+err_df2 %>% 
+  ggplot(aes(x = resid)) +
+  geom_histogram(binwidth = 5, 
+                 fill = "orange", 
+                 color = "grey") +
+  labs(title = "Residual Plot",
+       x = "Residual Value",
+       y = "Frequency") +
+  theme_minimal()
+```
+
+#### Tuned Prophet Model
+```{r, eval=FALSE}
+# See plot for SKU #983 to see how I selected changepoints
+mod2.1 <- prophet(growth = "linear",
+                changepoints = c("2022-03-11", "2022-06-08"),
+                yearly.seasonality = FALSE,
+                daily.seasonality = FALSE,
+                seasonality.prior.scale = 10,
+                holiday.prior.scale = 10,
+                changepoint.prior.scale = 10,
+                mcmc.samples = 0,
+                interval.width = 0.8,
+                uncertainty.samples = 1000,
+                fit = FALSE
+                )
+
+fit2.1 <- fit.prophet(mod2.1, df2)
+
+# 2 Months
+future2.1 <- make_future_dataframe(fit2.1, periods = 8*7)
+
+# Make a forecast
+fcst2.1 <- predict(fit2.1, future2.1)
+
+##########################################################
+# Since we cannot have negative predictive quantities, 
+# I invert the upper confidence interval and set the 
+# negative yhats to zero
+##########################################################
+
+fcst2.1 <- fcst2.1 %>% mutate(diff = yhat_upper - yhat)
+
+fcst2.1 <- fcst2.1 %>%
+  mutate(yhat_upper = ifelse(yhat_upper >= 0, yhat_upper, diff)) %>% 
+  mutate(yhat = ifelse(yhat >= 0, yhat, 0), 
+         yhat_lower = ifelse(yhat_lower >= 0, yhat_lower, 0))
+
+prophet_plot_components(fit2.1, fcst2.1)
+
+# Final plot of forecast
+plot(fit2.1, fcst2.1) + 
+  add_changepoints_to_plot(m = fit2, cp_color = "orange") +
+  labs(title = "Fitted Model and Forecast of an SKU",
+       x = "Date",
+       y = "Volume Purchased") +
+  theme_minimal()
+```
+
+```{r}
+# Model Evaluation
+pred2.1 <- fcst2.1 %>% filter(ds >= max(orig_df2$ds) - weeks(8)) %>%
+  select(ds, yhat_lower, yhat, yhat_upper)
+
+# Make a tibble of errors from the days
+err_df2.1 <- tibble(pred2.1$ds, eval2$y, pred2.1$yhat)
+
+colnames(err_df2.1) <- c("ds", "y", "yhat")
+
+# creating a residual column
+err_df2.1 <- err_df2.1 %>% mutate(resid = y - yhat)
+
+# We need to filter zeros for the err_df so that we can find MAPE
+# If the observed value is zero, MAPE is infinity.
+err_df2.1 <- err_df2.1 %>% filter(y != 0)
+
+#library(Metrics)
+
+# Get RMSE
+Metrics::rmse(err_df2.1$y, err_df2.1$yhat)
+
+# RMSE = 7.09337
+
+# Get SMAPE
+Metrics::smape(err_df2.1$y, err_df2.1$yhat) # can be infinity if predicted values in denominator are close to 1
+
+# SMAPE = .2417219
+
+# A MAPE function
+mean(abs((err_df2.1$y-err_df2.1$yhat)/err_df2.1$y))
+
+# MAPE = .3185393 - worse than the benchmark Prophet model
+
+err_df2.1 %>% 
+  ggplot(aes(x = resid)) +
+  geom_histogram(binwidth = 5, 
+                 fill = "orange", 
+                 color = "grey") +
+  labs(title = "Residual Plot",
+       x = "Residual Value",
+       y = "Frequency") +
+  theme_minimal()
+```
+
+So it appears that the tuned `Prophet` model only performed marginally better than the benchmark one; but also only marginally better than the other models. This is most likely due to the distribution of the data, and the inconsistency of it.
+
+# Modeling for `sku_id` 1487
+
+Again, I will follow the same protocol to control for modeling. We want to compare models across different time series, and how they perform. All of the time-series are similar to white-noise time series, and aren't smooth enough to be classified as random walk time series.
+
+```{r}
+df3 %>%
+  select(ds, y) %>% 
+  as_tsibble() %>%
+  tsibble::fill_gaps(y = mean(y)) %>% 
+  stretch_tsibble(.init = 7, .step = 1) %>%
+  model(
+    OLS = TSLM(y ~ ds),
+    `Simple Exponential Smoothing` = ETS(y ~ error("A") + trend("N") + season("N")),
+    `Holt's method` = ETS(y ~ error("A") + trend("A") + season("N")),
+    `Holt's method (damped)` = ETS(y ~ error("A") + trend("Ad") + season("N")),
+    `Stepwise ARIMA` = ARIMA(y, stepwise = TRUE),
+    `Greedy ARIMA` = ARIMA(y, greedy = TRUE)
+  ) %>%
+  forecast(h = "8 weeks") %>% fabletools::accuracy(data = as_tsibble(orig_df3))
+```
+
+
