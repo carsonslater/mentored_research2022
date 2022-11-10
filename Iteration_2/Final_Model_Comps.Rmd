@@ -1,5 +1,5 @@
 ---
-title: "Forecasting Demand Using Generallized Additive Models"
+title: "Forecasting Demand Using Generalized Additive Models"
 author: "Carson Slater"
 date: '2022-11-09'
 output: html_document
@@ -62,7 +62,7 @@ orig_df1 %>%
   #geom_point(color = "black", alpha = 0.5) +
   geom_smooth() +
   geom_line(color = "cornflowerblue", alpha = 0.8, size = 1) +
-  labs(title = "Plot of First Time Series", x = "Date",
+  labs(title = "Time Series 1", x = "Date",
        y = "Volume Purchased",
        caption= "`sku_id` 962") +
   theme_minimal()
@@ -73,7 +73,7 @@ orig_df2 %>%
   #geom_point(color = "black", alpha = 0.5) +
   geom_smooth() +
   geom_line(color = "cornflowerblue", alpha = 0.8, size = 1) +
-  labs(title = "Plot of Second Time Series", x = "Date",
+  labs(title = "Time Series 2", x = "Date",
        y = "Volume Purchased",
        caption= "`sku_id` 983") +
   theme_minimal()
@@ -85,7 +85,7 @@ orig_df3 %>%
   #geom_point(color = "black", alpha = 0.5) +
   geom_smooth() +
   geom_line(color = "cornflowerblue", alpha = 0.8, size = 1) +
-  labs(title = "Plot of Third Time Series", x = "Date",
+  labs(title = "Time Series 3", x = "Date",
        y = "Volume Purchased",
        caption= "`sku_id` 1487") +
   theme_minimal()
@@ -285,7 +285,7 @@ prophet_plot_components(fit1.2, fcst1.2)
 # Final plot of forecast
 plot(fit1.2, fcst1.2) + 
   add_changepoints_to_plot(m = fit1.2, cp_color = "orange") +
-  labs(title = "Fitted Model and Forecast of an SKU",
+  labs(title = "Fitted Model and Forecast for Time Series 1",
        x = "Date",
        y = "Volume Purchased") +
   theme_minimal()
@@ -491,7 +491,7 @@ prophet_plot_components(fit2.1, fcst2.1)
 # Final plot of forecast
 plot(fit2.1, fcst2.1) + 
   add_changepoints_to_plot(m = fit2, cp_color = "orange") +
-  labs(title = "Fitted Model and Forecast of an SKU",
+  labs(title = "Fitted Model and Forecast for Time Series 3",
        x = "Date",
        y = "Volume Purchased") +
   theme_minimal()
@@ -570,13 +570,92 @@ df3 %>%
 
 #### Baseline `Prophet` Model
 ```{r}
+mod3 <- prophet(df3, 
+               yearly.seasonality = TRUE, 
+               fit = FALSE, 
+               interval.width = 0.8) %>% 
+  add_country_holidays(country_name = 'ID')
+
+fit3 <- fit.prophet(mod3, df3)
+
+# 2 Months
+future3 <- make_future_dataframe(fit3, periods = 8*7)
+
+# Make a forecast
+fcst3 <- predict(fit3, future3)
+
+##########################################################
+# Since we cannot have negative predictive quantities, 
+# I invert the upper confidence interval and set the 
+# negative yhats to zero
+##########################################################
+
+fcst3 <- fcst3 %>% mutate(diff = yhat_upper - yhat)
+
+fcst3 <- fcst3 %>%
+  mutate(yhat_upper = ifelse(yhat_upper >= 0, yhat_upper, diff)) %>% 
+  mutate(yhat = ifelse(yhat >= 0, yhat, 0), 
+         yhat_lower = ifelse(yhat_lower >= 0, yhat_lower, 0))
+
+prophet_plot_components(fit3, fcst3)
+
+# Final plot of forecast
+plot(fit3, fcst3) + 
+  add_changepoints_to_plot(m = fit3, cp_color = "orange") +
+  labs(title = "Fitted Model and Forecast for Time Series 3",
+       x = "Date",
+       y = "Volume Purchased") +
+  theme_minimal()
+```
+
+```{r}
+# Model Evaluation
+pred3 <- fcst3 %>% filter(ds >= max(orig_df3$ds) - weeks(8)) %>%
+  select(ds, yhat_lower, yhat, yhat_upper)
+
+# Make a tibble of errors from the days
+err_df3 <- tibble(pred3$ds, eval3$y, pred3$yhat)
+
+colnames(err_df3) <- c("ds", "y", "yhat")
+
+# creating a residual column
+err_df3 <- err_df3 %>% mutate(resid = y - yhat)
+
+# We need to filter zeros for the err_df so that we can find MAPE
+# If the observed value is zero, MAPE is infinity.
+err_df3 <- err_df3 %>% filter(y != 0)
+
+#library(Metrics)
+
+# Get RMSE
+Metrics::rmse(err_df3$y, err_df3$yhat)
+
+# Get SMAPE
+Metrics::smape(err_df3$y, err_df3$yhat) # can be infinity if predicted values in denominator are close to 1
+
+# A MAPE function
+mean(abs((err_df3$y-err_df3$yhat)/err_df3$y))
+
+err_df3 %>% 
+  ggplot(aes(x = resid)) +
+  geom_histogram(binwidth = 5, 
+                 fill = "orange", 
+                 color = "grey") +
+  labs(title = "Residual Plot",
+       x = "Residual Value",
+       y = "Frequency") +
+  theme_minimal()
+```
+
+#### Tuned `Prophet` Model
+```{r}
 mod3.1 <- prophet(growth = "linear",
                 changepoints = c("2022-04-09", "2022-06-15"),
                 yearly.seasonality = FALSE,
                 daily.seasonality = FALSE,
                 seasonality.prior.scale = 10,
-                holiday.prior.scale = 10,
-                changepoint.prior.scale = 0.40,
+                holiday.prior.scale = 5,
+                changepoint.prior.scale = 0.350,
                 mcmc.samples = 0,
                 interval.width = 0.8,
                 uncertainty.samples = 1000,
