@@ -33,6 +33,8 @@ library(mosaic)
 library(prophet)
 library(forecast)
 library(fable)
+library(feasts)
+library(tsibble)
 library(Metrics)
 ```
 
@@ -46,6 +48,8 @@ A quick note for variable names:
  -`df1`, or anything that ends in a "1" corresponds to `sku_id` 963
  -`df2`, or anything that ends in a "2" corresponds to `sku_id` 983
  -`df3`, or anything that ends in a "3" corresponds to `sku_id` 1487
+
+I have taken out the outliers and imputed them with the mean value of the time series.
  
 ## Examining the Data
 ### Visualizing the Time Series
@@ -55,10 +59,10 @@ The three time series we have are as such:
 # 962
 orig_df1 %>% 
   ggplot(aes(x = ds, y = y)) +
-  geom_point(color = "black", alpha = 0.5) +
+  #geom_point(color = "black", alpha = 0.5) +
   geom_smooth() +
-  geom_line(color = "cornflowerblue", alpha = 0.8) +
-  labs(x = "Date",
+  geom_line(color = "cornflowerblue", alpha = 0.8, size = 1) +
+  labs(title = "Plot of First Time Series", x = "Date",
        y = "Volume Purchased",
        caption= "`sku_id` 962") +
   theme_minimal()
@@ -66,10 +70,10 @@ orig_df1 %>%
 # 983
 orig_df2 %>% 
   ggplot(aes(x = ds, y = y)) +
-  geom_point(color = "black", alpha = 0.5) +
+  #geom_point(color = "black", alpha = 0.5) +
   geom_smooth() +
-  geom_line(color = "cornflowerblue", alpha = 0.8) +
-  labs(x = "Date",
+  geom_line(color = "cornflowerblue", alpha = 0.8, size = 1) +
+  labs(title = "Plot of Second Time Series", x = "Date",
        y = "Volume Purchased",
        caption= "`sku_id` 983") +
   theme_minimal()
@@ -78,10 +82,10 @@ orig_df2 %>%
 # 1487
 orig_df3 %>% 
   ggplot(aes(x = ds, y = y)) +
-  geom_point(color = "black", alpha = 0.5) +
+  #geom_point(color = "black", alpha = 0.5) +
   geom_smooth() +
-  geom_line(color = "cornflowerblue", alpha = 0.8) +
-  labs(x = "Date",
+  geom_line(color = "cornflowerblue", alpha = 0.8, size = 1) +
+  labs(title = "Plot of Third Time Series", x = "Date",
        y = "Volume Purchased",
        caption= "`sku_id` 1487") +
   theme_minimal()
@@ -315,6 +319,12 @@ Metrics::smape(err_df1.2$y, err_df1.2$yhat) # can be infinity if predicted value
 # A MAPE function
 mean(abs((err_df1.2$y-err_df1.2$yhat)/err_df1.2$y))
 
+# Get MASE
+Metrics::mase(err_df1.2$y, err_df1.2$yhat)
+
+# Get ME
+Metrics::mae(err_df1.2$y, err_df1.2$yhat)
+
 err_df1.2 %>% 
   ggplot(aes(x = resid)) +
   geom_histogram(binwidth = 5, 
@@ -440,7 +450,7 @@ err_df2 %>%
 ```
 
 #### Tuned Prophet Model
-```{r, eval=FALSE}
+```{r, eval=TRUE}
 # See plot for SKU #983 to see how I selected changepoints
 mod2.1 <- prophet(growth = "linear",
                 changepoints = c("2022-03-11", "2022-06-08"),
@@ -521,6 +531,9 @@ mean(abs((err_df2.1$y-err_df2.1$yhat)/err_df2.1$y))
 
 # MAPE = .3185393 - worse than the benchmark Prophet model
 
+# Get MASE
+Metrics::mase(err_df2.1$y, err_df2.1$yhat)
+
 err_df2.1 %>% 
   ggplot(aes(x = resid)) +
   geom_histogram(binwidth = 5, 
@@ -555,4 +568,99 @@ df3 %>%
   forecast(h = "8 weeks") %>% fabletools::accuracy(data = as_tsibble(orig_df3))
 ```
 
+#### Baseline `Prophet` Model
+```{r}
+mod3.1 <- prophet(growth = "linear",
+                changepoints = c("2022-04-09", "2022-06-15"),
+                yearly.seasonality = FALSE,
+                daily.seasonality = FALSE,
+                seasonality.prior.scale = 10,
+                holiday.prior.scale = 10,
+                changepoint.prior.scale = 0.40,
+                mcmc.samples = 0,
+                interval.width = 0.8,
+                uncertainty.samples = 1000,
+                fit = FALSE
+                )
+
+# Fitting the Model
+fit3.1 <- fit.prophet(mod3.1, df3)
+
+# 2 Months
+future3.1 <- make_future_dataframe(fit3.1, periods = 8*7)
+
+# Make a forecast
+fcst3.1 <- predict(fit3.1, future3.1)
+
+##########################################################
+# Since we cannot have negative predictive quantities, 
+# I invert the upper confidence interval and set the 
+# negative yhats to zero
+##########################################################
+
+fcst3.1 <- fcst3.1 %>% mutate(diff = yhat_upper - yhat)
+
+fcst3.1 <- fcst3.1 %>%
+  mutate(yhat_upper = ifelse(yhat_upper >= 0, yhat_upper, diff)) %>% 
+  mutate(yhat = ifelse(yhat >= 0, yhat, 0), 
+         yhat_lower = ifelse(yhat_lower >= 0, yhat_lower, 0))
+
+prophet_plot_components(fit3.1, fcst3.1)
+
+# Final plot of forecast
+plot(fit3.1, fcst3.1) + 
+  add_changepoints_to_plot(m = fit3.1, cp_color = "orange") +
+  labs(title = "Fitted Model and Forecast of an SKU",
+       x = "Date",
+       y = "Volume Purchased") +
+  theme_minimal()
+```
+
+```{r}
+# Model Evaluation
+pred3.1 <- fcst3.1 %>% filter(ds >= max(orig_df3$ds) - weeks(8)) %>%
+  select(ds, yhat_lower, yhat, yhat_upper)
+
+# Make a tibble of errors from the days
+err_df3.1 <- tibble(pred3.1$ds, eval3$y, pred3.1$yhat)
+
+colnames(err_df3.1) <- c("ds", "y", "yhat")
+
+# creating a residual column
+err_df3.1 <- err_df3.1 %>% mutate(resid = y - yhat)
+
+# We need to filter zeros for the err_df so that we can find MAPE
+# If the observed value is zero, MAPE is infinity.
+err_df3.1 <- err_df3.1 %>% filter(y != 0)
+
+#library(Metrics)
+
+# Get RMSE
+Metrics::rmse(err_df3.1$y, err_df3.1$yhat)
+
+# RMSE = 15.52143
+
+# Get SMAPE
+Metrics::smape(err_df3.1$y, err_df3.1$yhat) # can be infinity if predicted values in denominator are close to 1
+
+# SMAPE = .2960448
+
+# A MAPE function
+mean(abs((err_df3.1$y-err_df3.1$yhat)/err_df3.1$y))
+
+# MAPE = .3697768
+
+# Get MASE
+Metrics::mase(err_df3.1$y, err_df3.1$yhat)
+
+err_df3.1 %>%  
+  ggplot(aes(x = resid)) +
+  geom_histogram(binwidth = 5, 
+                 fill = "orange", 
+                 color = "grey") +
+  labs(title = "Residual Plot",
+       x = "Residual Value",
+       y = "Frequency") +
+  theme_minimal()
+````
 
